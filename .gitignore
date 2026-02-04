@@ -1,1 +1,4 @@
 services/origin/cmd/server.*
+node_modules/
+hls/
+uploads/
