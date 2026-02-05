@@ -29,11 +29,11 @@ func sanitizeTitle(filename string) string {
 		name = "video"
 	}
 
-	return fmt.Sprint("%s-%d", name, time.Now().Unix())
+	return fmt.Sprintf("%s-%d", name, time.Now().Unix())
 }
 
 func saveUploadFile(file multipart.File, header *multipart.FileHeader, uploadsDir string) (string, string, error) {
-	if err := os.Mkdir(uploadsDir, 0755); err != nil {
+	if err := os.MkdirAll(uploadsDir, 0755); err != nil {
 		return "", "", err
 	}
 	title := sanitizeTitle(header.Filename)
