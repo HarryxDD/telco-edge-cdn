@@ -3,26 +3,25 @@ package main
 // Origin server entry point
 import (
 	"log"
-
-	"net/http"
 	"os"
+
+	"github.com/joho/godotenv"
+
+	"github.com/HarryxDD/telco-edge-cdn/origin/internal/api"
+	"github.com/HarryxDD/telco-edge-cdn/origin/internal/service"
+	"github.com/HarryxDD/telco-edge-cdn/origin/internal/store"
 )
 
-// load existing videos.json file (if present), otherwise starts with empty video list.
-func NewVideoStore(path string) (*VideoStore, error) {
-	s := &VideoStore{path: path}
-	if err := s.load(); err != nil {
-		return nil, err
-	}
-	return s, nil
-}
-
-// bootstrap server
 func main() {
-	uploadsDir := "uploads"
-	hlsDir := "hls"
-	videosPath := "videos.json"
-	addr := ":8443"
+	_ = godotenv.Load()
+
+	// Configuration from environment
+	uploadsDir := getEnv("UPLOADS_DIR", "uploads")
+	hlsDir := getEnv("HLS_DIR", "hls")
+	videosPath := getEnv("VIDEOS_PATH", "videos.json")
+	addr := getEnv("ADDR", ":8443")
+	certFile := getEnv("TLS_CERT_FILE", "server.crt")
+	keyFile := getEnv("TLS_KEY_FILE", "server.key")
 
 	if err := os.MkdirAll(uploadsDir, 0o755); err != nil {
 		log.Fatalf("create uploads dir: %v", err)
@@ -31,26 +30,31 @@ func main() {
 		log.Fatalf("create hls dir: %v", err)
 	}
 
-	store, err := NewVideoStore(videosPath)
+	// Initialize video store
+	videoStore, err := store.NewVideoStore(videosPath)
 	if err != nil {
 		log.Fatalf("load video store: %v", err)
 	}
 
-	handler := buildMux(store, uploadsDir, hlsDir)
+	// Initialize encoder service
+	encoder := service.NewEncoder(uploadsDir, hlsDir, videoStore)
 
-	// certFile/keyFile for secure connection
-	certFile := os.Getenv("TLS_CERT_FILE")
-	if certFile == "" {
-		certFile = "server.crt"
-	}
-	keyFile := os.Getenv("TLS_KEY_FILE")
-	if keyFile == "" {
-		keyFile = "server.key"
-	}
+	// Create and start API server
+	server := api.NewServer(videoStore, encoder, hlsDir)
 
-	log.Printf("Sample CDN Streaming App backend listening on https://localhost%v", addr)
-	log.Printf("Using TLS cert=%s key=%s", certFile, keyFile)
-	if err := http.ListenAndServeTLS(addr, certFile, keyFile, handler); err != nil {
+	log.Printf("Origin server starting on https://localhost%s", addr)
+	log.Printf("Uploads: %s, HLS: %s", uploadsDir, hlsDir)
+	log.Printf("TLS cert=%s key=%s", certFile, keyFile)
+
+	if err := server.StartTLS(addr, certFile, keyFile); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func getEnv(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+
+	return defaultValue
 }
