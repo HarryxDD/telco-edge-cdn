@@ -22,6 +22,7 @@ func main() {
 	addr := getEnv("ADDR", ":8443")
 	certFile := getEnv("TLS_CERT_FILE", "server.crt")
 	keyFile := getEnv("TLS_KEY_FILE", "server.key")
+	useTLS := getEnv("USE_TLS", "true")
 
 	if err := os.MkdirAll(uploadsDir, 0o755); err != nil {
 		log.Fatalf("create uploads dir: %v", err)
@@ -42,13 +43,21 @@ func main() {
 	// Create and start API server
 	server := api.NewServer(videoStore, encoder, hlsDir)
 
-	log.Printf("Origin server starting on https://localhost%s", addr)
-	log.Printf("Uploads: %s, HLS: %s", uploadsDir, hlsDir)
-	log.Printf("TLS cert=%s key=%s", certFile, keyFile)
-
-	if err := server.StartTLS(addr, certFile, keyFile); err != nil {
-		log.Fatal(err)
-	}
+	log.Printf("Origin server starting on http%s://0.0.0.0%s", 
+        map[bool]string{true: "s", false: ""}[useTLS == "true"], addr)
+    log.Printf("Uploads: %s, HLS: %s", uploadsDir, hlsDir)
+    
+    if useTLS == "true" {
+        log.Printf("TLS cert=%s key=%s", certFile, keyFile)
+        if err := server.StartTLS(addr, certFile, keyFile); err != nil {
+            log.Fatal(err)
+        }
+    } else {
+        log.Printf("TLS disabled (internal network)")
+        if err := server.Start(addr); err != nil {
+            log.Fatal(err)
+        }
+    }
 }
 
 func getEnv(key, defaultValue string) string {

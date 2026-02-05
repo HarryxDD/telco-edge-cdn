@@ -6,14 +6,13 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
-      // Proxy API and HLS requests to the Go backend running on :8080
       "/api": {
-        target: "https://localhost:8443",
+        target: "http://localhost:8090", // Call to LB
         changeOrigin: true,
         secure: false,
       },
       "/hls": {
-        target: "https://localhost:8443",
+        target: "http://localhost:8090",
         changeOrigin: true,
         secure: false,
       },

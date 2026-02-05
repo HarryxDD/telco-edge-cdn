@@ -3,30 +3,25 @@ package main
 import (
 	"log"
 	"os"
+	"strconv"
 
 	api "github.com/HarryxDD/telco-edge-cdn/cache-node/internal/api"
 	service "github.com/HarryxDD/telco-edge-cdn/cache-node/internal/service"
+	"github.com/joho/godotenv"
 )
 
 func main() {
-	nodeID := os.Getenv("NODE_ID")
-	if nodeID == "" {
-		nodeID = "edge-1"
-	}
+	_ = godotenv.Load()
 
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8081"
-	}
-
-	originURL := os.Getenv("ORIGIN_URL")
-
-	dbPath := os.Getenv("DB_PATH")
-	if dbPath == "" {
-		dbPath = "./data/cache-" + nodeID
-	}
-
-	cacheCapacity := int64(1024 * 1024 * 500) // 500MB
+	nodeID := getEnv("NODE_ID", "edge-1")
+	port := getEnv("PORT", "8081")
+	originURL := getEnv("ORIGIN_URL", "https://localhost:8443")
+	dbPath := getEnv("DB_PATH", "./data/cache-"+nodeID)
+	cacheCapacityStr := getEnv("CACHE_CAPACITY", "524288000")
+	cacheCapacity, err := strconv.ParseInt(cacheCapacityStr, 10, 64)
+    if err != nil {
+        cacheCapacity = 524288000
+    }
 
 	cache, err := service.NewEdgeCache(dbPath, originURL, nodeID, cacheCapacity)
 	if err != nil {
@@ -39,4 +34,11 @@ func main() {
 	if err := srv.Start(port); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func getEnv(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
 }

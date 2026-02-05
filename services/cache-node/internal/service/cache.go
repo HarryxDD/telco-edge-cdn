@@ -14,7 +14,7 @@ import (
 type EdgeCache struct {
 	db         *badger.DB
 	lru        *LRUCache
-	originURL  string
+	OriginURL  string
 	NodeID     string
 	httpClient *http.Client
 }
@@ -31,7 +31,7 @@ func NewEdgeCache(dbPath, originURL, nodeID string, cacheCapacity int64) (*EdgeC
 	return &EdgeCache{
 		db:        db,
 		lru:       NewLRUCache(cacheCapacity),
-		originURL: originURL,
+		OriginURL: originURL,
 		NodeID:    nodeID,
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
@@ -73,7 +73,7 @@ func (e *EdgeCache) Put(key string, data []byte) error {
 }
 
 func (e *EdgeCache) FetchFromOrigin(path string) ([]byte, error) {
-	url := e.originURL + path
+	url := e.OriginURL + path
 	log.Printf("Fetching from origin: %s", url)
 
 	resp, err := e.httpClient.Get(url)
