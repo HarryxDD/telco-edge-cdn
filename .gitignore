@@ -2,3 +2,87 @@ services/origin/cmd/server.*
 node_modules/
 hls/
 uploads/
+
+PLANNING_NOTES.md
+
+# Binaries
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+/bin/
+/dist/
+
+# Go
+go.work
+go.work.sum
+*.sum
+vendor/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+*.so
+.venv/
+venv/
+ENV/
+env/
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# ML Models & Data
+*.h5
+*.pkl
+*.joblib
+*.onnx
+*.pt
+*.pth
+/data/videos/*.mp4
+/data/videos/*.ts
+/data/videos/*.m3u8
+/data/logs/*.log
+
+# Monitoring & Observability
+prometheus/data/
+grafana/data/
+loki/data/
+jaeger/data/
+
+# Docker
+*.log
+.docker/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Containerlab
+clab-*/
+*.bak
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Benchmark results
+benchmarks/results/*.json
+benchmarks/results/*.html
+benchmarks/reports/*.pdf
+
+# Environment files
+.env
+.env.local
+*.pem
+*.key
+!*example.env
+
