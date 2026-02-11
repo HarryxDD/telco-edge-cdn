@@ -1,1 +1,1 @@
-// Integration layer
+package coordination
