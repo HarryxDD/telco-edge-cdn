@@ -47,7 +47,7 @@ type CacheInvalidateNotification struct {
 // PreFetchCommand represents AI-driven pre-fetch
 type PreFetchCommand struct {
 	VideoID   string
-	SegmentID string
+	Segments  []string
 	Priority  int // Higher means more urgent
 	ExpiresAt time.Time
 }
