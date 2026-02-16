@@ -50,7 +50,7 @@ func (s *Server) proxyRequest(ctx *gin.Context) {
 	s.ring.IncrementLoad(node.ID)
 	defer s.ring.DecrementLoad(node.ID)
 
-	targetURL := node.Address + fullPath
+	targetURL := "http://" + node.Address + fullPath
 	s.forwardRequest(ctx, targetURL, node.ID)
 }
 
@@ -68,7 +68,7 @@ func (s *Server) proxyHLSRequest(ctx *gin.Context) {
 	defer s.ring.DecrementLoad(node.ID)
 
 	// Map /hls/* to cache node's /hls/* endpoint
-	targetURL := node.Address + fullPath
+	targetURL := "http://" + node.Address + fullPath
 	s.forwardRequest(ctx, targetURL, node.ID)
 }
 
@@ -83,7 +83,7 @@ func (s *Server) proxyAPIRequest(ctx *gin.Context) {
 		return
 	}
 
-	targetURL := node.Address + fullPath
+	targetURL := "http://" + node.Address + fullPath
 	s.forwardRequest(ctx, targetURL, node.ID)
 }
 

@@ -1,11 +1,14 @@
 package service
 
 import (
+	"fmt"
+	"io"
 	"log"
 	"time"
 
 	"github.com/HarryxDD/telco-edge-cdn/cache-node/internal/coordination"
 	"github.com/HarryxDD/telco-edge-cdn/cache-node/internal/gossip"
+	"github.com/dgraph-io/badger/v4"
 )
 
 // EdgeCacheCoordinated extends EdgeCache with coordination
@@ -83,10 +86,42 @@ func (e *EdgeCacheCoordinated) fetchFromOrigin(segmentID string) ([]byte, error)
 }
 
 func (e *EdgeCacheCoordinated) fetchFromPeer(peerID, segmentID string) ([]byte, error) {
-	// TODO: Implement peer-to-peer fetch
-	// For now, fall back to origin
-	log.Printf("[CACHE] Peer fetch not implemented, falling back to origin")
-	return e.FetchFromOrigin(segmentID)
+	// Construct peer URL from peerID
+	// peerID format: "cache-1", "cache-2", "cache-3"
+	// Port mapping: cache-1 -> 8081, cache-2 -> 8082, cache-3 -> 8083
+	peerURL := fmt.Sprintf("http://%s:8081", peerID)
+	if peerID == "cache-2" {
+		peerURL = "http://cache-2:8082"
+	} else if peerID == "cache-3" {
+		peerURL = "http://cache-3:8083"
+	}
+
+	// segmentID format: "/videos/wolf-1770292891/segment_0000.m4s"
+	// Convert to /hls/ path for peer API: "/hls/wolf-1770292891/segment_0000.m4s"
+	path := segmentID
+	if len(segmentID) > 7 && segmentID[:7] == "/videos" {
+		path = "/hls" + segmentID[7:] // replace /videos with /hls
+	}
+
+	url := peerURL + path
+	log.Printf("[CACHE] Fetching %s from peer %s: %s", segmentID, peerID, url)
+
+	resp, err := e.httpClient.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("peer fetch failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("peer returned %d", resp.StatusCode)
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	return data, nil
 }
 
 func (e *EdgeCacheCoordinated) handlePreFetch(cmd gossip.PreFetchCommand) {
@@ -127,10 +162,46 @@ func (e *EdgeCacheCoordinated) handlePreFetch(cmd gossip.PreFetchCommand) {
 func (e *EdgeCacheCoordinated) handleInvalidate(videoID string) {
 	log.Printf("[CACHE] Invalidating cache for video %s", videoID)
 
-	// Evict all segments for this video
-	// This requires iterating through cache
-	// For now, simplified: clear entire cache (not production ready)
-	// TODO: Implement prefix-based eviction in BadgerDB
+	// Delete segments matching /videos/{videoID}/
+	prefix := fmt.Sprintf("/videos/%s", videoID)
 
-	log.Printf("[CACHE] Cache invalidation completed for %s", videoID)
+	err := e.db.Update(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.Prefix = []byte(prefix)
+		it := txn.NewIterator(opts)
+		defer it.Close()
+
+		deleteKeys := make([][]byte, 0)
+		for it.Rewind(); it.Valid(); it.Next() {
+			item := it.Item()
+			key := item.Key()
+			deleteKeys = append(deleteKeys, key)
+		}
+
+		// Delete all matching keys
+		for _, key := range deleteKeys {
+			if err := txn.Delete(key); err != nil {
+				return err
+			}
+			log.Printf("[%s] Delete cache entry: %s", e.NodeID, string(key))
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		log.Printf("[CACHE] Failed to invalidate cache for video %s: %v", videoID, err)
+	} else {
+		log.Printf("[CACHE] Invalidated cache for video %s", videoID)
+	}
+}
+
+// RequestFetchLock handles lock requests (leader only)
+func (e *EdgeCacheCoordinated) RequestFetchLock(segmentID, nodeID string) (bool, string) {
+	return e.coordinator.RequestLeaderLock(segmentID, nodeID)
+}
+
+// ReleaseFetchLock handles lock release (leader only)
+func (e *EdgeCacheCoordinated) ReleaseFetchLock(segmentID, nodeID string) error {
+	return e.coordinator.ReleaseLeaderLock(segmentID, nodeID)
 }

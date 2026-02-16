@@ -40,6 +40,10 @@ func (s *ServerCoordinated) Start(port string) error {
 	router.GET("/health", s.handleHealth)
 	router.GET("/coordination/status", s.handleCoordStatus)
 
+	// Coordination endpoints (leader only)
+	router.POST("/coordination/request-lock", s.handleRequestLock)
+	router.POST("/coordination/release-lock", s.handleReleaseLock)
+
 	// Client-facing paths (same as origin)
 	router.GET("/hls/:videoId/*filepath", s.serveHLS)
 	router.HEAD("/hls/:videoId/*filepath", s.serveHLS)
@@ -55,17 +59,15 @@ func (s *ServerCoordinated) handleHealth(ctx *gin.Context) {
 	ctx.JSON(200, gin.H{
 		"status": "healthy",
 		"node":   s.cache.NodeID,
-		// TODO: fix
-		// "is_leader": s.coordinator.IsLeader(),
+		"is_leader": s.coordinator.IsLeader(),
 	})
 }
 
 func (s *ServerCoordinated) handleCoordStatus(ctx *gin.Context) {
 	ctx.JSON(200, gin.H{
 		"node": s.cache.NodeID,
-		// TODO: fix
-		// "is_leader": s.coordinator.IsLeader(),
-		// "state":     s.coordinator.GetState(),
+		"is_leader": s.coordinator.IsLeader(),
+		"state":     s.coordinator.GetState(),
 	})
 }
 
@@ -80,7 +82,8 @@ func (s *ServerCoordinated) serveHLS(ctx *gin.Context) {
 }
 
 func (s *ServerCoordinated) serveCachedContent(ctx *gin.Context, requestPath string) {
-	cacheKey := hashKey(requestPath)
+	// Use requestPath directly as cache key (we need the path to fetch from origin)
+	cacheKey := requestPath
 
 	// Use coordinated get
 	data, found := s.cache.GetCoordinated(cacheKey)
@@ -118,6 +121,58 @@ func (s *ServerCoordinated) proxyToOrigin(ctx *gin.Context) {
 
 	data, _ := io.ReadAll(resp.Body)
 	ctx.Data(resp.StatusCode, resp.Header.Get("Content-Type"), data)
+}
+
+func (s *ServerCoordinated) handleRequestLock(ctx *gin.Context) {
+	var req struct {
+		SegmentID string `json:"segment_id"`
+		NodeID    string `json:"node_id"`
+	}
+
+	if err := ctx.BindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if !s.coordinator.IsLeader() {
+		ctx.JSON(http.StatusServiceUnavailable, gin.H{
+			"error":     "not leader",
+			"leader_id": s.coordinator.GetLeaderID(),
+		})
+		return
+	}
+
+	granted, fetchingNode := s.cache.RequestFetchLock(req.SegmentID, req.NodeID)
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"granted":       granted,
+		"fetching_node": fetchingNode,
+	})
+}
+
+func (s *ServerCoordinated) handleReleaseLock(ctx *gin.Context) {
+	var req struct {
+		SegmentID string `json:"segment_id"`
+		NodeID    string `json:"node_id"`
+	}
+
+	if err := ctx.BindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if !s.coordinator.IsLeader() {
+		ctx.JSON(http.StatusServiceUnavailable, gin.H{"error": "not leader"})
+		return
+	}
+
+	err := s.cache.ReleaseFetchLock(req.SegmentID, req.NodeID)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{"status": "released"})
 }
 
 func hashKey(key string) string {

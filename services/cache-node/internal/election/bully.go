@@ -56,7 +56,6 @@ func NewBullyElection(nodeID int, address string, port int, nodes map[int]NodeIn
 func (b *BullyElection) Start() error {
 	go b.startElectionServer()
 	go b.monitorLeader()
-	go b.handleElectionTimeout()
 
 	go func() {
 		time.Sleep(1 * time.Second)
@@ -385,8 +384,11 @@ func (b *BullyElection) handleElectionMsg(w http.ResponseWriter, r *http.Request
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(response)
 
-		// start election since i have higher priority
-		go b.startElection()
+		// Only start election if we don't have a recent leader
+		// avoid unnecessary election storms when we have a stable leader
+		if time.Since(b.lastHeartbeat) > HeartbeatTimeout {
+			go b.startElection()
+		}
 		return
 	}
 
@@ -428,28 +430,4 @@ func (b *BullyElection) handleHeartbeatMsg(w http.ResponseWriter, r *http.Reques
 	b.lastHeartbeat = time.Now()
 
 	w.WriteHeader(http.StatusOK)
-}
-
-func (b *BullyElection) handleElectionTimeout() {
-	ticker := time.NewTicker(ElectionTimeout)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			b.mu.Lock()
-			if b.electionInProgress {
-				// Election timed out, check if we should become leader
-				higherNodes := b.getNodesWithHigherID()
-				if len(higherNodes) == 0 {
-					b.becomeLeader()
-				}
-				b.electionInProgress = false
-			}
-			b.mu.Unlock()
-
-		case <-b.stopCh:
-			return
-		}
-	}
 }

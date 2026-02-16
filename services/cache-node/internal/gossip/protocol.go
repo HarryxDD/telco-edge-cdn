@@ -16,6 +16,7 @@ const (
 	CleanupInterval   = 30 * time.Second
 	StaleEntryTimeout = 60 * time.Second
 	RequestTimeout    = 2 * time.Second
+	GossipPortOffset  = 2000
 )
 
 type EpidemicGossip struct {
@@ -178,7 +179,7 @@ func (eg *EpidemicGossip) cleanupLoop() {
 }
 
 func (eg *EpidemicGossip) sendMessage(peer NodeInfo, endpoint string, msg GossipMessage) error {
-	url := fmt.Sprintf("http://%s:%d%s", peer.Address, peer.Port, endpoint)
+	url := fmt.Sprintf("http://%s:%d%s", peer.Address, peer.Port+GossipPortOffset, endpoint)
 
 	data, err := json.Marshal(msg)
 	if err != nil {
@@ -202,7 +203,7 @@ func (eg *EpidemicGossip) startGossipServer() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/gossip/message", eg.handleGossipMsg)
 
-	addr := fmt.Sprintf(":%d", eg.port+2000) // Gossip port = node port + 2000
+	addr := fmt.Sprintf(":%d", eg.port+GossipPortOffset)
 	log.Printf("[GOSSIP] Node %s starting gossip server on %s", eg.nodeID, addr)
 
 	server := &http.Server{

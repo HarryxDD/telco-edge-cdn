@@ -1,6 +1,8 @@
 package coordination
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -180,16 +182,81 @@ func (c *Coordinator) requestFetchLockFromLeader(segmentID string) (bool, string
 		return c.leaderLocks.RequestFetchLock(segmentID, c.nodeID, 30*time.Second)
 	}
 
-	// TODO: Send RPC to leader to request lock
-	// For now, simplified: each node manages its own locks
-	return c.lockManager.RequestFetchLock(segmentID, c.nodeID, 30*time.Second)
+	// Get leader ID and address
+	leaderID := c.election.GetLeaderID()
+	if leaderID == -1 {
+		log.Printf("[COORDINATOR] No leader available")
+		return false, ""
+	}
+
+	// Construct leader URL
+	// Leader ID format: 1, 2, 3
+	// Port mapping: 1 -> 8081, 2 -> 8082, 3 -> 8083
+	leaderPort := 8080 + leaderID
+	leaderURL := fmt.Sprintf("http://cache-%d:%d/coordination/request-lock", leaderID, leaderPort)
+
+	// Send RPC request
+	type LockRequest struct {
+		SegmentID string `json:"segment_id"`
+		NodeID    string `json:"node_id"`
+	}
+
+	reqBody, _ := json.Marshal(LockRequest{
+		SegmentID: segmentID,
+		NodeID:    c.nodeID,
+	})
+
+	resp, err := http.Post(leaderURL, "application/json", bytes.NewBuffer(reqBody))
+	if err != nil {
+		log.Printf("[COORDINATOR] Failed to request lock from leader: %v", err)
+		return false, ""
+	}
+
+	defer resp.Body.Close()
+
+	type LockResponse struct {
+		Granted      bool   `json:"granted"`
+		FetchingNode string `json:"fetching_node"`
+	}
+
+	var lockResp LockResponse
+	if err := json.NewDecoder(resp.Body).Decode(&lockResp); err != nil {
+		log.Printf("[COORDINATOR] Failed to decode lock response: %v", err)
+		return false, ""
+	}
+
+	return lockResp.Granted, lockResp.FetchingNode
 }
 
 func (c *Coordinator) releaseFetchLockToLeader(segmentID string) {
 	if c.election.IsLeader() {
 		c.leaderLocks.ReleaseFetchLock(segmentID, c.nodeID)
-	} else {
-		c.lockManager.ReleaseFetchLock(segmentID, c.nodeID)
+		return
+	}
+
+	// Get leader ID and address
+	leaderID := c.election.GetLeaderID()
+	if leaderID == -1 {
+		log.Printf("[COORDINATOR] No leader available to release lock")
+		return
+	}
+
+	leaderPort := 8080 + leaderID
+	leaderURL := fmt.Sprintf("http://cache-%d:%d/coordination/release-lock", leaderID, leaderPort)
+
+	type ReleaseLockRequest struct {
+		SegmentID string `json:"segment_id"`
+		NodeID    string `json:"node_id"`
+	}
+
+	reqBody, _ := json.Marshal(ReleaseLockRequest{
+		SegmentID: segmentID,
+		NodeID:    c.nodeID,
+	})
+
+	_, err := http.Post(leaderURL, "application/json", bytes.NewBuffer(reqBody))
+	if err != nil {
+		log.Printf("[COORDINATOR] Failed to release lock to leader: %v", err)
 	}
 }
 
@@ -231,16 +298,16 @@ func (c *Coordinator) cleanupLoop() {
 	}
 }
 
-// StartCoordinationAPI starts HTTP API for coordination (leader endpoints)
-func (c *Coordinator) StartCoordinationAPI(port int) {
+func (c *Coordinator) StartHTTPServer(port int) {
+	gin.SetMode(gin.ReleaseMode)
 	router := gin.Default()
 
 	// Leader endpoints
-	router.POST("/coord/lock/request", c.handleLockRequest)
-	router.POST("/coord/lock/release", c.handleLockRelease)
-	router.GET("/coord/status", c.handleStatus)
+	router.POST("/coordination/request-lock", c.handleLockRequest)
+	router.POST("/coordination/release-lock", c.handleLockRelease)
+	router.GET("/coordination/status", c.handleStatus)
 
-	addr := fmt.Sprintf(":%d", port+3000) // Coordination port = node port + 3000
+	addr := fmt.Sprintf(":%d", port+3000)
 	log.Printf("[COORDINATOR] API listening on %s", addr)
 
 	go router.Run(addr)
@@ -308,4 +375,36 @@ func (c *Coordinator) handleStatus(ctx *gin.Context) {
 		"leader_id": c.election.GetLeaderID(),
 		"state":     c.election.GetState(),
 	})
+}
+
+func (c *Coordinator) IsLeader() bool {
+	return c.election.IsLeader()
+}
+
+func (c *Coordinator) GetLeaderID() int {
+	return c.election.GetLeaderID()
+}
+
+func (c *Coordinator) GetState() string {
+	state := c.election.GetState()
+	switch state {
+	case election.StateLeader:
+		return "leader"
+	case election.StateFollower:
+		return "follower"
+	case election.StateCandidate:
+		return "candidate"
+	default:
+		return "unknown"
+	}
+}
+
+// RequestLeaderLock exposes leader lock manager for HTTP handlers
+func (c *Coordinator) RequestLeaderLock(segmentID, nodeID string) (bool, string) {
+	return c.leaderLocks.RequestFetchLock(segmentID, nodeID, 30*time.Second)
+}
+
+// ReleaseLeaderLock exposes leader lock manager for HTTP handlers
+func (c *Coordinator) ReleaseLeaderLock(segmentID, nodeID string) error {
+	return c.leaderLocks.ReleaseFetchLock(segmentID, nodeID)
 }

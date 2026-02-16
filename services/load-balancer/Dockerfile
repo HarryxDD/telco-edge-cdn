@@ -19,4 +19,7 @@ COPY --from=builder /app/load-balancer .
 
 EXPOSE 8090
 
+HEALTHCHECK --interval=10s --timeout=5s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider https://localhost:8090/health || exit 1
+
 CMD ["./load-balancer"]
