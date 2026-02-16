@@ -56,6 +56,14 @@ func NewBullyElection(nodeID int, address string, port int, nodes map[int]NodeIn
 func (b *BullyElection) Start() error {
 	go b.startElectionServer()
 	go b.monitorLeader()
+	go b.handleElectionTimeout()
+
+	go func() {
+		time.Sleep(1 * time.Second)
+		b.startElection()
+	}()
+
+	log.Printf("[bully] node %d started", b.nodeID)
 
 	return nil
 }
@@ -258,7 +266,6 @@ func (b *BullyElection) sendHeartbeats() {
 			}
 			b.mu.RUnlock()
 
-			// send heartbeats to all followers
 			for _, node := range b.nodes {
 				if node.ID == b.nodeID {
 					continue
@@ -274,7 +281,7 @@ func (b *BullyElection) sendHeartbeats() {
 				go b.sendMessage(node, "/election/heartbeat", msg)
 			}
 
-		case <-b.stopCh: // ← ADD THIS
+		case <-b.stopCh:
 			log.Printf("[bully] stopping heartbeat sender")
 			return
 		}
@@ -421,4 +428,28 @@ func (b *BullyElection) handleHeartbeatMsg(w http.ResponseWriter, r *http.Reques
 	b.lastHeartbeat = time.Now()
 
 	w.WriteHeader(http.StatusOK)
+}
+
+func (b *BullyElection) handleElectionTimeout() {
+	ticker := time.NewTicker(ElectionTimeout)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			b.mu.Lock()
+			if b.electionInProgress {
+				// Election timed out, check if we should become leader
+				higherNodes := b.getNodesWithHigherID()
+				if len(higherNodes) == 0 {
+					b.becomeLeader()
+				}
+				b.electionInProgress = false
+			}
+			b.mu.Unlock()
+
+		case <-b.stopCh:
+			return
+		}
+	}
 }
