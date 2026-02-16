@@ -18,7 +18,7 @@ func NewEdgeCacheCoordinated(
 	dbPath,
 	originURL,
 	nodeID string,
-	cacheCapacity int64,
+	cacheCapacity int,
 	coordinator *coordination.Coordinator,
 ) (*EdgeCacheCoordinated, error) {
 	// Create base cache

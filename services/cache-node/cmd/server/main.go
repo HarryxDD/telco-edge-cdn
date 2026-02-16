@@ -25,8 +25,12 @@ func main() {
 	originURL := getEnv("ORIGIN_URL", "https://localhost:8443")
 	dbPath := getEnv("DB_PATH", "./data/cache-"+nodeIDStr)
 
-	cacheCapacityStr := getEnv("CACHE_CAPACITY", "524288000")
-	cacheCapacity, err := strconv.ParseInt(cacheCapacityStr, 10, 64)
+	// Cache capacity in number of items (not bytes)
+	cacheCapacityStr := getEnv("CACHE_CAPACITY", "1000")
+	cacheCapacity, err := strconv.Atoi(cacheCapacityStr)
+	if err != nil {
+		log.Fatalf("Invalid CACHE_CAPACITY: %v", err)
+	}
 
 	// Parse cluster nodes
 	nodesConfig := getEnv("CLUSTER_NODES", "cache-1:localhost:8081,cache-2:localhost:8082,cache-3:localhost:8083")
