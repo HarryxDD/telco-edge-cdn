@@ -26,7 +26,7 @@ echo ""
 
 # Check if tc is available in container, install if needed
 echo "Checking dependencies..."
-docker exec $CONTAINER sh -c 'command -v tc >/dev/null 2>&1 || (apt-get update -qq && apt-get install -y -qq iproute2 > /dev/null 2>&1)'
+docker exec $CONTAINER sh -c 'command -v tc >/dev/null 2>&1 || apk add --no-cache iproute2'
 
 # Add latency using netem (applies to incoming traffic from cache nodes)
 echo "Injecting latency..."

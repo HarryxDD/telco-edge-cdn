@@ -3,11 +3,20 @@ package coordination
 import (
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/HarryxDD/telco-edge-cdn/cache-node/internal/election"
 	"github.com/HarryxDD/telco-edge-cdn/cache-node/internal/gossip"
 )
+
+// inflightRequest tracks a single in-flight fetch request
+type inflightRequest struct {
+	data  []byte
+	peer  string
+	err   error
+	done  chan struct{}
+}
 
 // Coordinator integrates leader election, gossip, and lock management
 // for distributed cache coordination
@@ -16,6 +25,10 @@ type Coordinator struct {
 	election    election.LeaderElection
 	gossip      gossip.GossipProtocol
 	leaderLocks *LockManager
+
+	// Local in-flight request deduplication (prevents local stampede)
+	inflightMu sync.Mutex
+	inflight   map[string]*inflightRequest
 
 	// Callback for fetching from origin
 	onCacheMiss func(segmentID string) ([]byte, error)
@@ -31,6 +44,7 @@ func NewCoordinator(
 		election:    elec,
 		gossip:      gosp,
 		leaderLocks: NewLockManager(),
+		inflight:    make(map[string]*inflightRequest),
 	}
 
 	// Register leader change callback
@@ -68,9 +82,35 @@ func (c *Coordinator) RegisterCallbacks(
 }
 
 func (c *Coordinator) HandleCacheMiss(segmentID string) ([]byte, string, error) {
+	// LOCAL DEDUPLICATION: Check if another goroutine in this node is already fetching
+	c.inflightMu.Lock()
+	if req, exists := c.inflight[segmentID]; exists {
+		// Another goroutine is fetching, wait for it
+		c.inflightMu.Unlock()
+		log.Printf("[COORDINATOR] Waiting for local in-flight fetch of %s", segmentID)
+		<-req.done
+		return req.data, req.peer, req.err
+	}
+
+	// We're the first - create in-flight tracker
+	req := &inflightRequest{
+		done: make(chan struct{}),
+	}
+	c.inflight[segmentID] = req
+	c.inflightMu.Unlock()
+
+	// Ensure cleanup
+	defer func() {
+		c.inflightMu.Lock()
+		delete(c.inflight, segmentID)
+		c.inflightMu.Unlock()
+		close(req.done)
+	}()
+
 	// Check if any peer has it via gossip
 	if peerID, found := c.gossip.FindPeerWithSegment(segmentID); found {
 		log.Printf("[COORDINATOR] Segment %s found at peer %s", segmentID, peerID)
+		req.peer = peerID
 		return nil, peerID, nil
 	}
 
@@ -83,6 +123,7 @@ func (c *Coordinator) HandleCacheMiss(segmentID string) ([]byte, string, error) 
 		data, err := c.onCacheMiss(segmentID)
 		if err != nil {
 			c.releaseFetchLockToLeader(segmentID)
+			req.err = err
 			return nil, "", err
 		}
 
@@ -90,20 +131,27 @@ func (c *Coordinator) HandleCacheMiss(segmentID string) ([]byte, string, error) 
 		c.releaseFetchLockToLeader(segmentID)
 		c.NotifyCacheAdd(segmentID, int64(len(data)))
 
+		req.data = data
 		return data, "", nil
 	}
 
 	// Lock denied - another node is fetching
-	// Wait briefly and check gossip again (the fetching node will broadcast)
+	// Wait with retries for the fetching node to broadcast
 	log.Printf("[COORDINATOR] Node %s is fetching %s, waiting for broadcast...", fetchingNode, segmentID)
-	time.Sleep(5 * time.Second)
-
-	if peerID, found := c.gossip.FindPeerWithSegment(segmentID); found {
-		log.Printf("[COORDINATOR] Segment %s now available at peer %s", segmentID, peerID)
-		return nil, peerID, nil
+	
+	// Retry up to 6 times (1s intervals = 6s max wait, enough for origin fetch)
+	for i := 0; i < 6; i++ {
+		time.Sleep(1 * time.Second)
+		
+		if peerID, found := c.gossip.FindPeerWithSegment(segmentID); found {
+			log.Printf("[COORDINATOR] Segment %s now available at peer %s (after %ds)", segmentID, peerID, i+1)
+			req.peer = peerID
+			return nil, peerID, nil
+		}
 	}
 
-	return nil, "", fmt.Errorf("timeout waiting for segment %s", segmentID)
+	req.err = fmt.Errorf("timeout waiting for segment %s after 6s", segmentID)
+	return nil, "", req.err
 }
 
 // NotifyCacheAdd broadcasts to cluster that this node has a segment

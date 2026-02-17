@@ -1,10 +1,10 @@
-version: '3.8'
-
 services:
   origin:
     build:
       context: ../../services/origin
     container_name: telco-origin
+    cap_add:
+      - NET_ADMIN
     hostname: origin
     environment:
       - PORT=8443

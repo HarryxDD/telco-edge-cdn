@@ -34,7 +34,7 @@ func NewEdgeCache(dbPath, originURL, nodeID string, cacheCapacity int) (*EdgeCac
 		OriginURL: originURL,
 		NodeID:    nodeID,
 		httpClient: &http.Client{
-			Timeout: 10 * time.Second,
+			Timeout: 30 * time.Second, // Increased for high-latency demos
 		},
 	}, nil
 }

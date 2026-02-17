@@ -23,7 +23,7 @@ func FetchFromPeer(peerID, segmentID string) ([]byte, error) {
 	url := peerURL + path
 	log.Printf("[PEER_CLIENT] Fetching %s from peer %s: %s", segmentID, peerID, url)
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: 30 * time.Second} // Increased for high-latency scenarios
 	resp, err := client.Get(url)
 	if err != nil {
 		return nil, fmt.Errorf("peer fetch failed: %w", err)

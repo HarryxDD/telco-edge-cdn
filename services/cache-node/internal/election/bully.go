@@ -33,6 +33,8 @@ type BullyElection struct {
 	client             *http.Client
 	leaderCallbacks    []func(newLeaderID int)
 	server             *http.Server
+	deadNodes          map[int]time.Time // Track dead nodes to avoid spam
+	failedAttempts     map[int]int       // Count consecutive failures
 }
 
 func NewBullyElection(nodeID int, address string, port int, nodes map[int]NodeInfo) *BullyElection {
@@ -50,6 +52,8 @@ func NewBullyElection(nodeID int, address string, port int, nodes map[int]NodeIn
 		client: &http.Client{
 			Timeout: ResponseTimeout,
 		},
+		deadNodes:      make(map[int]time.Time),
+		failedAttempts: make(map[int]int),
 	}
 }
 
@@ -320,13 +324,36 @@ func (b *BullyElection) sendMessage(node NodeInfo, endpoint string, msg Election
 
 	resp, err := b.client.Post(url, "application/json", bytes.NewBuffer(reqBody))
 	if err != nil {
-		// only log if it's not expected (not during election when nodes might be down)
-		if msg.Type != MsgElection {
-			log.Printf("[bully] failed to send %v to node %d: %v", msg.Type, node.ID, err)
+		b.mu.Lock()
+		b.failedAttempts[node.ID]++
+		failCount := b.failedAttempts[node.ID]
+		
+		// Mark as dead after 3 consecutive failures
+		if failCount >= 3 {
+			if _, wasDead := b.deadNodes[node.ID]; !wasDead {
+				log.Printf("[bully] marking node %d as dead after %d failed attempts", node.ID, failCount)
+				b.deadNodes[node.ID] = time.Now()
+			}
+		} else {
+			// Only log first few failures
+			if msg.Type != MsgElection && failCount <= 2 {
+				log.Printf("[bully] failed to send %v to node %d: %v (attempt %d)", msg.Type, node.ID, err, failCount)
+			}
 		}
+		b.mu.Unlock()
 		return false
 	}
 	defer resp.Body.Close()
+
+	b.mu.Lock()
+	if b.failedAttempts[node.ID] > 0 || b.deadNodes[node.ID] != (time.Time{}) {
+		if _, wasDead := b.deadNodes[node.ID]; wasDead {
+			log.Printf("[bully] node %d is back online", node.ID)
+		}
+		b.failedAttempts[node.ID] = 0
+		delete(b.deadNodes, node.ID)
+	}
+	b.mu.Unlock()
 
 	return resp.StatusCode == http.StatusOK
 }

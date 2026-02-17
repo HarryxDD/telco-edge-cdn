@@ -6,11 +6,11 @@ LB_URL := http://localhost:8090
 VIDEO_ID := wolf-1770316220
 
 # Colors for output
-BLUE := \033[0;34m
-GREEN := \033[0;32m
-YELLOW := \033[1;33m
-RED := \033[0;31m
-NC := \033[0m # No Color
+BLUE := $(shell printf "\033[0;34m")
+GREEN := $(shell printf "\033[0;32m")
+YELLOW := $(shell printf "\033[1;33m")
+RED := $(shell printf "\033[0;31m")
+NC := $(shell printf "\033[0m")
 
 ##@ General
 
@@ -21,11 +21,11 @@ help: ## Display this help
 
 build: ## Build all services
 	@echo "$(BLUE) Building services...$(NC)"
-	@cd infrastructure/docker-compose && docker-compose build
+	@cd infrastructure/docker-compose && docker compose build
 
 up: ## Start all services
 	@echo "$(GREEN) Starting...$(NC)"
-	@cd infrastructure/docker-compose && docker-compose up -d
+	@cd infrastructure/docker-compose && docker compose up -d
 	@echo "$(GREEN) Started!$(NC)"
 	@echo "$(YELLOW) Waiting for services to be ready...$(NC)"
 	@sleep 10
@@ -33,13 +33,13 @@ up: ## Start all services
 
 down: ## Stop all services
 	@echo "$(RED) Stopping...$(NC)"
-	@cd infrastructure/docker-compose && docker-compose down
+	@cd infrastructure/docker-compose && docker compose down
 
 restart: down up ## Restart all services
 
 clean: ## Stop and remove all containers, volumes, and data
 	@echo "$(RED) Cleaning up...$(NC)"
-	@cd infrastructure/docker-compose && docker-compose down -v
+	@cd infrastructure/docker-compose && docker compose down -v
 	@echo "$(GREEN) Cleanup complete$(NC)"
 
 rebuild: clean build up ## Clean rebuild and start
@@ -63,37 +63,37 @@ status: ## Show cluster status
 	@echo ""
 
 logs: ## Show logs from all services
-	@cd infrastructure/docker-compose && docker-compose logs -f
+	@cd infrastructure/docker-compose && docker compose logs -f
 
 logs-lb: ## Show load balancer logs
-	@cd infrastructure/docker-compose && docker-compose logs -f load-balancer
+	@cd infrastructure/docker-compose && docker compose logs -f load-balancer
 
 logs-origin: ## Show origin server logs
-	@cd infrastructure/docker-compose && docker-compose logs -f origin
+	@cd infrastructure/docker-compose && docker compose logs -f origin
 
 logs-cache-1: ## Show cache-1 logs
-	@cd infrastructure/docker-compose && docker-compose logs -f cache-1
+	@cd infrastructure/docker-compose && docker compose logs -f cache-1
 
 logs-cache-2: ## Show cache-2 logs
-	@cd infrastructure/docker-compose && docker-compose logs -f cache-2
+	@cd infrastructure/docker-compose && docker compose logs -f cache-2
 
 logs-cache-3: ## Show cache-3 logs
-	@cd infrastructure/docker-compose && docker-compose logs -f cache-3
+	@cd infrastructure/docker-compose && docker compose logs -f cache-3
 
 logs-cache-all: ## Show all cache node logs
-	@cd infrastructure/docker-compose && docker-compose logs cache-1 cache-2 cache-3
+	@cd infrastructure/docker-compose && docker compose logs cache-1 cache-2 cache-3
 
 logs-origin-fetch: ## Show origin fetch logs (to verify stampede prevention)
 	@echo "$(YELLOW) Origin fetch logs (should show minimal fetches due to caching):$(NC)"
-	@cd infrastructure/docker-compose && docker-compose logs origin | grep -i "GET /videos" || echo "No origin fetches yet"
+	@cd infrastructure/docker-compose && docker compose logs origin | grep -i "GET /videos" || echo "No origin fetches yet"
 
 logs-cache-locks: ## Show lock coordination logs
 	@echo "$(YELLOW) Lock coordination logs:$(NC)"
-	@cd infrastructure/docker-compose && docker-compose logs cache-1 cache-2 cache-3 | grep -E "(Got lock|Lock denied|COORDINATED MISS)" || echo "No lock events yet"
+	@cd infrastructure/docker-compose && docker compose logs cache-1 cache-2 cache-3 | grep -E "(Got lock|Lock denied|COORDINATED MISS)" || echo "No lock events yet"
 
 logs-cache-gossip: ## Show gossip protocol logs
 	@echo "$(YELLOW) Gossip protocol logs:$(NC)"
-	@cd infrastructure/docker-compose && docker-compose logs cache-1 cache-2 cache-3 | grep -i gossip || echo "No gossip events yet"
+	@cd infrastructure/docker-compose && docker compose logs cache-1 cache-2 cache-3 | grep -i gossip || echo "No gossip events yet"
 
 ##@ Testing
 
@@ -221,6 +221,9 @@ latency-demo-test: ## Run DEMO latency test (2.5s origin delay - VERY visible!)
 demo: ## Run complete demo scenario (impresses professors!)
 	@bash scripts/demo-scenario.sh $(LB_URL)
 
+demo-setup: ## Setup cluster for demo (run 10 min before presentation)
+	@bash scripts/demo-setup.sh
+
 demo-quick: ## Quick demo (health + basic fetch + failure)
 	@echo "$(BLUE) QUICK DEMO$(NC)"
 	@echo "---"
@@ -266,5 +269,5 @@ shell-origin: ## Open shell in origin container
 	@docker exec -it telco-origin /bin/sh
 
 ps: ## Show running containers
-	@cd infrastructure/docker-compose && docker-compose ps
+	@cd infrastructure/docker-compose && docker compose ps
 
