@@ -4,8 +4,12 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 
 	api "github.com/HarryxDD/telco-edge-cdn/cache-node/internal/api"
+	"github.com/HarryxDD/telco-edge-cdn/cache-node/internal/coordination"
+	"github.com/HarryxDD/telco-edge-cdn/cache-node/internal/election"
+	"github.com/HarryxDD/telco-edge-cdn/cache-node/internal/gossip"
 	service "github.com/HarryxDD/telco-edge-cdn/cache-node/internal/service"
 	"github.com/joho/godotenv"
 )
@@ -13,25 +17,53 @@ import (
 func main() {
 	_ = godotenv.Load()
 
-	nodeID := getEnv("NODE_ID", "edge-1")
-	port := getEnv("PORT", "8081")
+	// Parse configuration
+	nodeIDStr := getEnv("NODE_ID", "cache-1")
+	nodeID, _ := strconv.Atoi(strings.TrimPrefix(nodeIDStr, "cache-"))
+	port, _ := strconv.Atoi(getEnv("PORT", "8081"))
+	address := getEnv("ADDRESS", "localhost")
 	originURL := getEnv("ORIGIN_URL", "https://localhost:8443")
-	dbPath := getEnv("DB_PATH", "./data/cache-"+nodeID)
-	cacheCapacityStr := getEnv("CACHE_CAPACITY", "524288000")
-	cacheCapacity, err := strconv.ParseInt(cacheCapacityStr, 10, 64)
-    if err != nil {
-        cacheCapacity = 524288000
-    }
+	dbPath := getEnv("DB_PATH", "./data/cache-"+nodeIDStr)
 
-	cache, err := service.NewEdgeCache(dbPath, originURL, nodeID, cacheCapacity)
+	// Cache capacity in number of items (not bytes)
+	cacheCapacityStr := getEnv("CACHE_CAPACITY", "1000")
+	cacheCapacity, err := strconv.Atoi(cacheCapacityStr)
+	if err != nil {
+		log.Fatalf("Invalid CACHE_CAPACITY: %v", err)
+	}
+
+	// Parse cluster nodes
+	nodesConfig := getEnv("CLUSTER_NODES", "cache-1:localhost:8081,cache-2:localhost:8082,cache-3:localhost:8083")
+	electionNodes, gossipPeers := parseClusterNodes(nodesConfig)
+
+	log.Printf("Starting cache node: ID=%d, Port=%d", nodeID, port)
+	log.Printf("Cluster nodes: %v", electionNodes)
+
+	elec := election.NewBullyElection(nodeID, address, port, electionNodes)
+
+	gosp := gossip.NewEpidemicGossip(nodeIDStr, address, port, gossipPeers)
+
+	coord := coordination.NewCoordinator(nodeIDStr, elec, gosp)
+
+	cache, err := service.NewEdgeCache(dbPath, originURL, nodeIDStr, cacheCapacity)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// Initialize the API Server
-	srv := api.NewServer(cache)
+	// Register origin fetch callback with coordinator
+	coord.RegisterCallbacks(cache.FetchFromOrigin)
 
-	if err := srv.Start(port); err != nil {
+	// Start coordination (after cache and callback are ready)
+	if err := coord.Start(); err != nil {
+		log.Fatalf("Failed to start coordinator: %v", err)
+	}
+
+	// Initialize API server
+	srv := api.NewServerCoordinated(cache, coord)
+
+	log.Printf("[CACHE-SERVER] Cache node %s ready on port %d", nodeIDStr, port)
+
+	if err := srv.Start(strconv.Itoa(port)); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -41,4 +73,36 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+func parseClusterNodes(config string) (map[int]election.NodeInfo, map[string]gossip.NodeInfo) {
+	electionNodes := make(map[int]election.NodeInfo)
+	gossipPeers := make(map[string]gossip.NodeInfo)
+
+	for _, nodeStr := range strings.Split(config, ",") {
+		parts := strings.Split(strings.TrimSpace(nodeStr), ":")
+		if len(parts) != 3 {
+			continue
+		}
+
+		nodeIDStr := parts[0]
+		address := parts[1]
+		port, _ := strconv.Atoi(parts[2])
+
+		nodeID, _ := strconv.Atoi(strings.TrimPrefix(nodeIDStr, "cache-"))
+
+		electionNodes[nodeID] = election.NodeInfo{
+			ID:      nodeID,
+			Address: address,
+			Port:    port,
+		}
+
+		gossipPeers[nodeIDStr] = gossip.NodeInfo{
+			ID:      nodeIDStr,
+			Address: address,
+			Port:    port,
+		}
+	}
+
+	return electionNodes, gossipPeers
 }

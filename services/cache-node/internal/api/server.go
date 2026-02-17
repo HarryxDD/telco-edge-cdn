@@ -1,30 +1,31 @@
 package api
 
 import (
-	"crypto/sha256"
 	"crypto/tls"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"time"
 
-	. "github.com/HarryxDD/telco-edge-cdn/cache-node/internal/service"
+	"github.com/HarryxDD/telco-edge-cdn/cache-node/internal/coordination"
+	"github.com/HarryxDD/telco-edge-cdn/cache-node/internal/service"
 	"github.com/gin-gonic/gin"
 )
 
-type Server struct {
-	cache *EdgeCache
+type ServerCoordinated struct {
+	cache       *service.EdgeCache
+	coordinator *coordination.Coordinator
 }
 
-func NewServer(cache *EdgeCache) *Server {
-	return &Server{
-		cache: cache,
+func NewServerCoordinated(cache *service.EdgeCache, coord *coordination.Coordinator) *ServerCoordinated {
+	return &ServerCoordinated{
+		cache:       cache,
+		coordinator: coord,
 	}
 }
 
-func (e *Server) Start(port string) error {
+func (s *ServerCoordinated) Start(port string) error {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.Default()
 
@@ -34,75 +35,80 @@ func (e *Server) Start(port string) error {
 	})
 
 	// router.GET("/metrics", gin.WrapH())
-	router.GET("/health", func(ctx *gin.Context) {
-		ctx.JSON(200, gin.H{"status": "healthy", "node": e.cache.NodeID})
-	})
+	router.GET("/health", s.handleHealth)
+	router.GET("/coordination/status", s.handleCoordStatus)
 
-	// Cache paths
-	router.GET("/videos/:videoId/*filepath", e.serveVideo)
-	router.HEAD("/videos/:videoId/*filepath", e.serveVideo)
+	// Coordination endpoints (leader only)
+	router.POST("/coordination/request-lock", s.handleRequestLock)
+	router.POST("/coordination/release-lock", s.handleReleaseLock)
 
 	// Client-facing paths (same as origin)
-	router.GET("/hls/:videoId/*filepath", e.serveHLS)
-	router.HEAD("/hls/:videoId/*filepath", e.serveHLS)
+	router.GET("/hls/:videoId/*filepath", s.serveHLS)
+	router.HEAD("/hls/:videoId/*filepath", s.serveHLS)
 
 	// API proxy to origin
-	router.GET("/api/videos", e.proxyToOrigin)
+	router.GET("/api/videos", s.proxyToOrigin)
 
-	log.Printf("Edge cache %s starting on part %s", e.cache.NodeID, port)
+	log.Printf("Edge cache %s starting on part %s", s.cache.NodeID, port)
 	return router.Run(":" + port)
 }
 
-func (e *Server) serveHLS(ctx *gin.Context) {
+func (s *ServerCoordinated) handleHealth(ctx *gin.Context) {
+	ctx.JSON(200, gin.H{
+		"status":    "healthy",
+		"node":      s.cache.NodeID,
+		"is_leader": s.coordinator.IsLeader(),
+	})
+}
+
+func (s *ServerCoordinated) handleCoordStatus(ctx *gin.Context) {
+	ctx.JSON(200, gin.H{
+		"node":      s.cache.NodeID,
+		"is_leader": s.coordinator.IsLeader(),
+		"state":     s.coordinator.GetState(),
+	})
+}
+
+func (s *ServerCoordinated) serveHLS(ctx *gin.Context) {
 	videoId := ctx.Param("videoId")
 	filepath := ctx.Param("filepath")
 
 	// Map /hls/{videoId}/file to /videos/{videoId}/file for caching
 	requestPath := fmt.Sprintf("/videos/%s%s", videoId, filepath)
+	cacheKey := requestPath
 
-	e.serveCachedContent(ctx, requestPath)
-}
+	// First try local cache
+	data, found := s.cache.Get(cacheKey)
+	if found {
+		log.Printf("[%s] COORDINATED HIT (local): %s", s.cache.NodeID, requestPath)
+	} else {
+		// Cache miss - coordinate with cluster
+		log.Printf("[%s] COORDINATED MISS: %s", s.cache.NodeID, requestPath)
+		var peerID string
+		var err error
 
-func (e *Server) serveVideo(ctx *gin.Context) {
-	videoId := ctx.Param("videoId")
-	filepath := ctx.Param("filepath")
-	requestPath := fmt.Sprintf("/videos/%s%s", videoId, filepath)
+		data, peerID, err = s.coordinator.HandleCacheMiss(cacheKey)
+		if err != nil {
+			log.Printf("[%s] HandleCacheMiss failed for %s: %v", s.cache.NodeID, requestPath, err)
+			ctx.JSON(502, gin.H{"error": "failed to fetch content"})
+			return
+		}
 
-	e.serveCachedContent(ctx, requestPath)
-}
+		if peerID != "" {
+			// Fetch from peer using coordination helper
+			log.Printf("[%s] Fetching segment %s from peer %s", s.cache.NodeID, cacheKey, peerID)
+			data, err = coordination.FetchFromPeer(peerID, cacheKey)
+			if err != nil {
+				log.Printf("[%s] Failed to fetch from peer %s: %v", s.cache.NodeID, peerID, err)
+				ctx.JSON(502, gin.H{"error": "failed to fetch content"})
+				return
+			}
+		}
 
-func (e *Server) serveCachedContent(ctx *gin.Context, requestPath string) {
-	cacheKey := hashKey(requestPath)
-
-	// Check cache
-	if data, found := e.cache.Get(cacheKey); found {
-		log.Printf("[%s] CACHE HIT: %s", e.cache.NodeID, requestPath)
-
-		contentType := getContentType(requestPath)
-		ctx.Header("Content-Type", contentType)
-		ctx.Data(200, contentType, data)
-		return
-	}
-
-	// Cache miss - fetch from origin
-	log.Printf("[%s] CACHE MISS: %s", e.cache.NodeID, requestPath)
-
-	// Map back to /hls/* for origin
-	originPath := requestPath
-	if len(requestPath) > 7 && requestPath[:8] == "/videos/" {
-		originPath = "/hls" + requestPath[7:] // /videos/wolf-123 → /hls/wolf-123
-	}
-
-	data, err := e.cache.FetchFromOrigin(originPath)
-	if err != nil {
-		log.Printf("Error fetching from origin: %v", err)
-		ctx.JSON(502, gin.H{"error": "failed to fetch from origin"})
-		return
-	}
-
-	// Store in cache
-	if err := e.cache.Put(cacheKey, data); err != nil {
-		log.Printf("Failed to cache: %v", err)
+		// Store in local cache
+		if err := s.cache.Put(cacheKey, data); err != nil {
+			log.Printf("[%s] Failed to store segment %s: %v", s.cache.NodeID, cacheKey, err)
+		}
 	}
 
 	contentType := getContentType(requestPath)
@@ -111,32 +117,80 @@ func (e *Server) serveCachedContent(ctx *gin.Context, requestPath string) {
 }
 
 // Proxy /api/videos to origin
-func (e *Server) proxyToOrigin(ctx *gin.Context) {
-    url := e.cache.OriginURL + "/api/videos"
-    
-    client := &http.Client{
-        Timeout: 5 * time.Second,
-        Transport: &http.Transport{
-            TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-        },
-    }
-    
-    resp, err := client.Get(url)
-    if err != nil {
-        log.Printf("Error proxying /api/videos to origin: %v", err)
-        ctx.JSON(502, gin.H{"error": "origin unreachable"})
-        return
-    }
-    defer resp.Body.Close()
-    
-    data, _ := io.ReadAll(resp.Body)
-    ctx.Data(resp.StatusCode, resp.Header.Get("Content-Type"), data)
+func (s *ServerCoordinated) proxyToOrigin(ctx *gin.Context) {
+	url := s.cache.OriginURL + "/api/videos"
+
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
+
+	resp, err := client.Get(url)
+	if err != nil {
+		log.Printf("Error proxying /api/videos to origin: %v", err)
+		ctx.JSON(502, gin.H{"error": "origin unreachable"})
+		return
+	}
+	defer resp.Body.Close()
+
+	data, _ := io.ReadAll(resp.Body)
+	ctx.Data(resp.StatusCode, resp.Header.Get("Content-Type"), data)
 }
 
-func hashKey(key string) string {
-	h := sha256.New()
-	h.Write([]byte(key))
-	return hex.EncodeToString(h.Sum(nil))
+func (s *ServerCoordinated) handleRequestLock(ctx *gin.Context) {
+	var req struct {
+		SegmentID string `json:"segment_id"`
+		NodeID    string `json:"node_id"`
+	}
+
+	if err := ctx.BindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if !s.coordinator.IsLeader() {
+		ctx.JSON(http.StatusServiceUnavailable, gin.H{
+			"error":     "not leader",
+			"leader_id": s.coordinator.GetLeaderID(),
+		})
+		return
+	}
+
+	// Call coordinator directly
+	granted, fetchingNode := s.coordinator.RequestLeaderLock(req.SegmentID, req.NodeID)
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"granted":       granted,
+		"fetching_node": fetchingNode,
+	})
+}
+
+func (s *ServerCoordinated) handleReleaseLock(ctx *gin.Context) {
+	var req struct {
+		SegmentID string `json:"segment_id"`
+		NodeID    string `json:"node_id"`
+	}
+
+	if err := ctx.BindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if !s.coordinator.IsLeader() {
+		ctx.JSON(http.StatusServiceUnavailable, gin.H{"error": "not leader"})
+		return
+	}
+
+	// Call coordinator directly
+	err := s.coordinator.ReleaseLeaderLock(req.SegmentID, req.NodeID)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{"status": "released"})
 }
 
 func getContentType(path string) string {

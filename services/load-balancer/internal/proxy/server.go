@@ -28,30 +28,15 @@ func (s *Server) Start(port string) error {
 		ctx.JSON(200, gin.H{"status": "healthy"})
 	})
 
-	router.Any("/videos/*path", s.proxyRequest)
+	// API routes go to origin server
+	router.POST("/api/upload", s.proxyToOrigin)
+	router.GET("/api/videos", s.proxyToOrigin)
+
+	// HLS content goes through cache nodes
 	router.Any("/hls/*path", s.proxyHLSRequest)
-	router.Any("/api/*path", s.proxyAPIRequest)
 
 	log.Printf("Load balancer starting on port %s", port)
 	return router.Run()
-}
-
-func (s *Server) proxyRequest(ctx *gin.Context) {
-	path := ctx.Param("path")
-	fullPath := "/videos" + path
-
-	// Get node for the request
-	node := s.ring.GetNode(fullPath)
-	if node == nil {
-		ctx.JSON(503, gin.H{"error": "no healthy nodes available"})
-		return
-	}
-
-	s.ring.IncrementLoad(node.ID)
-	defer s.ring.DecrementLoad(node.ID)
-
-	targetURL := node.Address + fullPath
-	s.forwardRequest(ctx, targetURL, node.ID)
 }
 
 func (s *Server) proxyHLSRequest(ctx *gin.Context) {
@@ -67,23 +52,7 @@ func (s *Server) proxyHLSRequest(ctx *gin.Context) {
 	s.ring.IncrementLoad(node.ID)
 	defer s.ring.DecrementLoad(node.ID)
 
-	// Map /hls/* to cache node's /hls/* endpoint
-	targetURL := node.Address + fullPath
-	s.forwardRequest(ctx, targetURL, node.ID)
-}
-
-func (s *Server) proxyAPIRequest(ctx *gin.Context) {
-	path := ctx.Param("path")
-	fullPath := "/api" + path
-
-	// For /api/videos, just pick any node (doesn't matter which)
-	node := s.ring.GetNode(fullPath)
-	if node == nil {
-		ctx.JSON(503, gin.H{"error": "no healthy nodes available"})
-		return
-	}
-
-	targetURL := node.Address + fullPath
+	targetURL := "http://" + node.Address + fullPath
 	s.forwardRequest(ctx, targetURL, node.ID)
 }
 
@@ -100,7 +69,7 @@ func (s *Server) forwardRequest(ctx *gin.Context, targetURL, nodeID string) {
 		}
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: 30 * time.Second} // Increased timeout for uploads
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Printf("Error proxying to %s: %v", nodeID, err)
@@ -117,4 +86,10 @@ func (s *Server) forwardRequest(ctx *gin.Context, targetURL, nodeID string) {
 
 	ctx.Writer.WriteHeader(resp.StatusCode)
 	io.Copy(ctx.Writer, resp.Body)
+}
+
+func (s *Server) proxyToOrigin(ctx *gin.Context) {
+	// Route to origin server (for API requests like upload, video list)
+	originURL := "http://origin:8443" + ctx.Request.URL.Path
+	s.forwardRequest(ctx, originURL, "origin")
 }

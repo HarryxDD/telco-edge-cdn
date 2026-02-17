@@ -26,4 +26,7 @@ RUN mkdir -p /app/uploads /app/hls
 
 EXPOSE 8443
 
+HEALTHCHECK --interval=10s --timeout=5s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider https://localhost:8443/health || exit 1
+
 CMD ["./origin"]

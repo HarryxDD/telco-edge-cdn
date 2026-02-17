@@ -7,19 +7,19 @@ import (
 	"net/http"
 	"time"
 
-	. "github.com/HarryxDD/telco-edge-cdn/cache-node/internal/lru"
+	"github.com/HarryxDD/telco-edge-cdn/cache-node/internal/wtinylfu"
 	badger "github.com/dgraph-io/badger/v4"
 )
 
 type EdgeCache struct {
 	db         *badger.DB
-	lru        *LRUCache
+	eviction   *wtinylfu.WTinyLFUCache
 	OriginURL  string
 	NodeID     string
 	httpClient *http.Client
 }
 
-func NewEdgeCache(dbPath, originURL, nodeID string, cacheCapacity int64) (*EdgeCache, error) {
+func NewEdgeCache(dbPath, originURL, nodeID string, cacheCapacity int) (*EdgeCache, error) {
 	opts := badger.DefaultOptions(dbPath)
 	opts.Logger = nil
 
@@ -30,11 +30,11 @@ func NewEdgeCache(dbPath, originURL, nodeID string, cacheCapacity int64) (*EdgeC
 
 	return &EdgeCache{
 		db:        db,
-		lru:       NewLRUCache(cacheCapacity),
+		eviction:  wtinylfu.NewWTinyLFUCache(cacheCapacity),
 		OriginURL: originURL,
 		NodeID:    nodeID,
 		httpClient: &http.Client{
-			Timeout: 10 * time.Second,
+			Timeout: 30 * time.Second, // Increased for high-latency demos
 		},
 	}, nil
 }
@@ -51,12 +51,12 @@ func (e *EdgeCache) Get(key string) ([]byte, bool) {
 	})
 
 	if err == nil {
-		e.lru.Access(key)
-		// TODO: Log cache hit here
+		e.eviction.Access(key)
+		log.Printf("[%s] CACHE HIT: %s", e.NodeID, key)
 		return data, true
 	}
 
-	// TODO: Log cache missed here
+	log.Printf("[%s] CACHE MISS: %s", e.NodeID, key)
 	return nil, false
 }
 
@@ -66,7 +66,7 @@ func (e *EdgeCache) Put(key string, data []byte) error {
 	})
 
 	if err == nil {
-		e.lru.Insert(key, int64(len(data)))
+		e.eviction.Add(key)
 	}
 
 	return err
@@ -87,5 +87,13 @@ func (e *EdgeCache) FetchFromOrigin(path string) ([]byte, error) {
 	}
 
 	data, err := io.ReadAll(resp.Body)
-	return data, err
+	if err != nil {
+		return nil, err
+	}
+
+	return data, nil
+}
+
+func (e *EdgeCache) Close() error {
+	return e.db.Close()
 }

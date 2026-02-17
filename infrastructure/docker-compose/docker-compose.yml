@@ -1,10 +1,16 @@
-version: '3.8'
-
 services:
   origin:
     build:
       context: ../../services/origin
     container_name: telco-origin
+    cap_add:
+      - NET_ADMIN
+    hostname: origin
+    environment:
+      - PORT=8443
+      - USE_TLS=false
+      - HLS_DIR=/app/hls
+      - VIDEOS_JSON=/app/videos.json
     ports:
       - "${ORIGIN_PORT:-8443}:8443"
     env_file:
@@ -14,39 +20,133 @@ services:
       - origin-hls:/app/hls
     networks:
       - cdn-network
-    environment:
-      - USE_TLS=false
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost:8443/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     command: ["./origin"]
 
-  cache-node:
+  cache-1:
     build:
       context: ../../services/cache-node
+      dockerfile: Dockerfile
     container_name: telco-cache-1
+    hostname: cache-1
+    environment:
+      - NODE_ID=cache-1
+      - NODE_NUM=1
+      - PORT=8081
+      - ORIGIN_URL=http://origin:8443
+      - DB_PATH=/data/cache
+      - CACHE_CAPACITY=1000
+      - CLUSTER_NODES=cache-1:cache-1:8081,cache-2:cache-2:8082,cache-3:cache-3:8083
+      - PEER_NODES=cache-2:8082,cache-3:8083
     ports:
-      - "${CACHE_NODE_PORT:-8081}:8081"
+      - "8081:8081"
+      - "9081:9081"
+      - "10081:10081"
     env_file:
       - ../../services/cache-node/.env
-    environment:
-      - ORIGIN_URL=http://origin:8443
     volumes:
-      - cache-data:/app/data
+      - cache-1-data:/app/data
     depends_on:
       - origin
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost:8081/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - cdn-network
+  
+  cache-2:
+    build:
+      context: ../../services/cache-node
+      dockerfile: Dockerfile
+    container_name: telco-cache-2
+    hostname: cache-2
+    environment:
+      - NODE_ID=cache-2
+      - NODE_NUM=2
+      - PORT=8082
+      - ORIGIN_URL=http://origin:8443
+      - DB_PATH=/data/cache
+      - CACHE_CAPACITY=1000
+      - CLUSTER_NODES=cache-1:cache-1:8081,cache-2:cache-2:8082,cache-3:cache-3:8083
+      - PEER_NODES=cache-1:8081,cache-3:8083
+    ports:
+      - "8082:8082"
+      - "9082:9082"
+      - "10082:10082"
+    env_file:
+      - ../../services/cache-node/.env
+    volumes:
+      - cache-2-data:/app/data
+    depends_on:
+      - origin
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost:8082/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - cdn-network
+
+  cache-3:
+    build:
+      context: ../../services/cache-node
+      dockerfile: Dockerfile
+    container_name: telco-cache-3
+    hostname: cache-3
+    environment:
+      - NODE_ID=cache-3
+      - NODE_NUM=3
+      - PORT=8083
+      - ORIGIN_URL=http://origin:8443
+      - DB_PATH=/data/cache
+      - CACHE_CAPACITY=1000
+      - CLUSTER_NODES=cache-1:cache-1:8081,cache-2:cache-2:8082,cache-3:cache-3:8083
+      - PEER_NODES=cache-1:8081,cache-2:8082
+    ports:
+      - "8083:8083"
+      - "9083:9083"
+      - "10083:10083"
+    env_file:
+      - ../../services/cache-node/.env
+    volumes:
+      - cache-3-data:/app/data
+    depends_on:
+      - origin
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost:8083/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
     networks:
       - cdn-network
 
   load-balancer:
     build:
       context: ../../services/load-balancer
+      dockerfile: Dockerfile
     container_name: telco-lb
+    environment:
+      - PORT=8090
+      - CACHE_NODES=cache-1:cache-1:8081,cache-2:cache-2:8082,cache-3:cache-3:8083
     ports:
       - "${LOAD_BALANCER_PORT:-8090}:8090"
     env_file:
       - ../../services/load-balancer/.env
-    environment:
-      - CACHE_NODES=cache-1:http://cache-node:8081
     depends_on:
-      - cache-node
+      - cache-1
+      - cache-2
+      - cache-3
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost:8090/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
     networks:
       - cdn-network
 
@@ -57,4 +157,6 @@ networks:
 volumes:
   origin-uploads:
   origin-hls:
-  cache-data:
+  cache-1-data:
+  cache-2-data:
+  cache-3-data:

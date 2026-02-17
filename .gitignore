@@ -19,7 +19,6 @@ DEMO_NOTES.md
 # Go
 go.work
 go.work.sum
-*.sum
 vendor/
 
 # Python

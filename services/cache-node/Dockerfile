@@ -19,6 +19,9 @@ COPY --from=builder /app/cache-node .
 
 RUN mkdir -p /app/data
 
-EXPOSE 8081
+EXPOSE 8081 9081 10081
+
+HEALTHCHECK --interval=10s --timeout=5s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider https://localhost:8081/health || exit 1
 
 CMD ["./cache-node"]

@@ -130,7 +130,7 @@ func (b *BoundedLoadHashRing) HealthCheck() {
 	for range ticker.C {
 		b.mu.Lock()
 		for _, node := range b.nodes {
-			resp, err := b.httpClient.Get(node.Address + "/health")
+			resp, err := b.httpClient.Get("http://" + node.Address + "/health")
 			if err != nil || resp.StatusCode != 200 {
 				if node.Healthy {
 					log.Printf("Node %s is DOWN", node.ID)
