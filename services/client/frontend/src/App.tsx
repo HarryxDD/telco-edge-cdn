@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import "./App.css";
 import VideoList, { VideoMeta } from "./VideoList";
 import VideoPlayer from "./VideoPlayer";
+import VideoUpload from "./VideoUpload";
 
 function App() {
   const [videos, setVideos] = useState<VideoMeta[]>([]);
@@ -35,6 +36,7 @@ function App() {
         >
           <h1>CDN Streaming App</h1>
         </div>
+        <VideoUpload onUploadComplete={fetchVideos} />
         <VideoList
           videos={videos}
           onSelect={(video) => setSelectedTitle(video.title)}
