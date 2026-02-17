@@ -39,24 +39,23 @@ func main() {
 	log.Printf("Starting cache node: ID=%d, Port=%d", nodeID, port)
 	log.Printf("Cluster nodes: %v", electionNodes)
 
-	// Initialize leader election
 	elec := election.NewBullyElection(nodeID, address, port, electionNodes)
 
-	// Initialize gossip
 	gosp := gossip.NewEpidemicGossip(nodeIDStr, address, port, gossipPeers)
 
-	// Initialize coordinator
 	coord := coordination.NewCoordinator(nodeIDStr, elec, gosp)
 
-	// Start coordination
-	if err := coord.Start(); err != nil {
-		log.Fatalf("Failed to start coordinator: %v", err)
-	}
-
-	// Initialize cache with coordination
-	cache, err := service.NewEdgeCacheCoordinated(dbPath, originURL, nodeIDStr, cacheCapacity, coord)
+	cache, err := service.NewEdgeCache(dbPath, originURL, nodeIDStr, cacheCapacity)
 	if err != nil {
 		log.Fatal(err)
+	}
+
+	// Register origin fetch callback with coordinator
+	coord.RegisterCallbacks(cache.FetchFromOrigin)
+
+	// Start coordination (after cache and callback are ready)
+	if err := coord.Start(); err != nil {
+		log.Fatalf("Failed to start coordinator: %v", err)
 	}
 
 	// Initialize API server

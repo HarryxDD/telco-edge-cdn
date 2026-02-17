@@ -96,7 +96,7 @@ func (c *Coordinator) HandleCacheMiss(segmentID string) ([]byte, string, error) 
 	// Lock denied - another node is fetching
 	// Wait briefly and check gossip again (the fetching node will broadcast)
 	log.Printf("[COORDINATOR] Node %s is fetching %s, waiting for broadcast...", fetchingNode, segmentID)
-	time.Sleep(2 * time.Second)
+	time.Sleep(5 * time.Second)
 
 	if peerID, found := c.gossip.FindPeerWithSegment(segmentID); found {
 		log.Printf("[COORDINATOR] Segment %s now available at peer %s", segmentID, peerID)

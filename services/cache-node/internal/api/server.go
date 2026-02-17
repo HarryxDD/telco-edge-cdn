@@ -9,16 +9,16 @@ import (
 	"time"
 
 	"github.com/HarryxDD/telco-edge-cdn/cache-node/internal/coordination"
-	. "github.com/HarryxDD/telco-edge-cdn/cache-node/internal/service"
+	"github.com/HarryxDD/telco-edge-cdn/cache-node/internal/service"
 	"github.com/gin-gonic/gin"
 )
 
 type ServerCoordinated struct {
-	cache       *EdgeCacheCoordinated
+	cache       *service.EdgeCache
 	coordinator *coordination.Coordinator
 }
 
-func NewServerCoordinated(cache *EdgeCacheCoordinated, coord *coordination.Coordinator) *ServerCoordinated {
+func NewServerCoordinated(cache *service.EdgeCache, coord *coordination.Coordinator) *ServerCoordinated {
 	return &ServerCoordinated{
 		cache:       cache,
 		coordinator: coord,
@@ -75,23 +75,41 @@ func (s *ServerCoordinated) serveHLS(ctx *gin.Context) {
 
 	// Map /hls/{videoId}/file to /videos/{videoId}/file for caching
 	requestPath := fmt.Sprintf("/videos/%s%s", videoId, filepath)
-
-	s.serveCachedContent(ctx, requestPath)
-}
-
-func (s *ServerCoordinated) serveCachedContent(ctx *gin.Context, requestPath string) {
-	// Use requestPath directly as cache key (we need the path to fetch from origin)
 	cacheKey := requestPath
 
-	// Use coordinated get
-	data, found := s.cache.GetCoordinated(cacheKey)
-	if !found {
+	// First try local cache
+	data, found := s.cache.Get(cacheKey)
+	if found {
+		log.Printf("[%s] COORDINATED HIT (local): %s", s.cache.NodeID, requestPath)
+	} else {
+		// Cache miss - coordinate with cluster
 		log.Printf("[%s] COORDINATED MISS: %s", s.cache.NodeID, requestPath)
-		ctx.JSON(502, gin.H{"error": "failed to fetch content"})
-		return
-	}
+		var peerID string
+		var err error
 
-	log.Printf("[%s] COORDINATED HIT: %s", s.cache.NodeID, requestPath)
+		data, peerID, err = s.coordinator.HandleCacheMiss(cacheKey)
+		if err != nil {
+			log.Printf("[%s] HandleCacheMiss failed for %s: %v", s.cache.NodeID, requestPath, err)
+			ctx.JSON(502, gin.H{"error": "failed to fetch content"})
+			return
+		}
+
+		if peerID != "" {
+			// Fetch from peer using coordination helper
+			log.Printf("[%s] Fetching segment %s from peer %s", s.cache.NodeID, cacheKey, peerID)
+			data, err = coordination.FetchFromPeer(peerID, cacheKey)
+			if err != nil {
+				log.Printf("[%s] Failed to fetch from peer %s: %v", s.cache.NodeID, peerID, err)
+				ctx.JSON(502, gin.H{"error": "failed to fetch content"})
+				return
+			}
+		}
+
+		// Store in local cache
+		if err := s.cache.Put(cacheKey, data); err != nil {
+			log.Printf("[%s] Failed to store segment %s: %v", s.cache.NodeID, cacheKey, err)
+		}
+	}
 
 	contentType := getContentType(requestPath)
 	ctx.Header("Content-Type", contentType)
