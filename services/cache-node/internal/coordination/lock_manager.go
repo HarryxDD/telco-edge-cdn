@@ -16,15 +16,13 @@ type FetchLock struct {
 
 // LockManager manages fetch locks to prevent duplicate origin requests
 type LockManager struct {
-	mu      sync.RWMutex
-	locks   map[string]*FetchLock
-	waiters map[string][]chan struct{}
+	mu    sync.RWMutex
+	locks map[string]*FetchLock
 }
 
 func NewLockManager() *LockManager {
 	return &LockManager{
-		locks:   make(map[string]*FetchLock),
-		waiters: make(map[string][]chan struct{}),
+		locks: make(map[string]*FetchLock),
 	}
 }
 
@@ -70,42 +68,7 @@ func (lm *LockManager) ReleaseFetchLock(segmentID string, nodeID string) error {
 	}
 
 	delete(lm.locks, segmentID)
-
-	// Notify waiters
-	if waiters, exists := lm.waiters[segmentID]; exists {
-		for _, ch := range waiters {
-			close(ch)
-		}
-		delete(lm.waiters, segmentID)
-	}
-
 	return nil
-}
-
-// WaitForSegment blocks until segment fetch completes or timeout
-func (lm *LockManager) WaitForSegment(segmentID string, timeout time.Duration) bool {
-	lm.mu.Lock()
-
-	// Check if lock exists
-	if _, exists := lm.locks[segmentID]; !exists {
-		lm.mu.Unlock()
-		return true
-	}
-
-	ch := make(chan struct{})
-	if _, exists := lm.waiters[segmentID]; !exists {
-		lm.waiters[segmentID] = make([]chan struct{}, 0)
-	}
-	lm.waiters[segmentID] = append(lm.waiters[segmentID], ch)
-	lm.mu.Unlock()
-
-	// Wait for notification or timeout
-	select {
-	case <-ch:
-		return true
-	case <-time.After(timeout):
-		return false
-	}
 }
 
 // CleanupExpiredLocks removes expired locks
@@ -117,14 +80,6 @@ func (lm *LockManager) CleanupExpiredLocks() {
 	for segmentID, lock := range lm.locks {
 		if now.After(lock.ExpiresAt) {
 			delete(lm.locks, segmentID)
-
-			// Notify waiters
-			if waiters, exists := lm.waiters[segmentID]; exists {
-				for _, ch := range waiters {
-					close(ch)
-				}
-				delete(lm.waiters, segmentID)
-			}
 		}
 	}
 }

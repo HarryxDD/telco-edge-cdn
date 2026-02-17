@@ -28,30 +28,11 @@ func (s *Server) Start(port string) error {
 		ctx.JSON(200, gin.H{"status": "healthy"})
 	})
 
-	router.Any("/videos/*path", s.proxyRequest)
 	router.Any("/hls/*path", s.proxyHLSRequest)
 	router.Any("/api/*path", s.proxyAPIRequest)
 
 	log.Printf("Load balancer starting on port %s", port)
 	return router.Run()
-}
-
-func (s *Server) proxyRequest(ctx *gin.Context) {
-	path := ctx.Param("path")
-	fullPath := "/videos" + path
-
-	// Get node for the request
-	node := s.ring.GetNode(fullPath)
-	if node == nil {
-		ctx.JSON(503, gin.H{"error": "no healthy nodes available"})
-		return
-	}
-
-	s.ring.IncrementLoad(node.ID)
-	defer s.ring.DecrementLoad(node.ID)
-
-	targetURL := "http://" + node.Address + fullPath
-	s.forwardRequest(ctx, targetURL, node.ID)
 }
 
 func (s *Server) proxyHLSRequest(ctx *gin.Context) {
@@ -67,7 +48,6 @@ func (s *Server) proxyHLSRequest(ctx *gin.Context) {
 	s.ring.IncrementLoad(node.ID)
 	defer s.ring.DecrementLoad(node.ID)
 
-	// Map /hls/* to cache node's /hls/* endpoint
 	targetURL := "http://" + node.Address + fullPath
 	s.forwardRequest(ctx, targetURL, node.ID)
 }
@@ -76,7 +56,6 @@ func (s *Server) proxyAPIRequest(ctx *gin.Context) {
 	path := ctx.Param("path")
 	fullPath := "/api" + path
 
-	// For /api/videos, just pick any node (doesn't matter which)
 	node := s.ring.GetNode(fullPath)
 	if node == nil {
 		ctx.JSON(503, gin.H{"error": "no healthy nodes available"})

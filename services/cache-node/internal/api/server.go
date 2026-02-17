@@ -1,9 +1,7 @@
 package api
 
 import (
-	"crypto/sha256"
 	"crypto/tls"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"log"
@@ -57,15 +55,15 @@ func (s *ServerCoordinated) Start(port string) error {
 
 func (s *ServerCoordinated) handleHealth(ctx *gin.Context) {
 	ctx.JSON(200, gin.H{
-		"status": "healthy",
-		"node":   s.cache.NodeID,
+		"status":    "healthy",
+		"node":      s.cache.NodeID,
 		"is_leader": s.coordinator.IsLeader(),
 	})
 }
 
 func (s *ServerCoordinated) handleCoordStatus(ctx *gin.Context) {
 	ctx.JSON(200, gin.H{
-		"node": s.cache.NodeID,
+		"node":      s.cache.NodeID,
 		"is_leader": s.coordinator.IsLeader(),
 		"state":     s.coordinator.GetState(),
 	})
@@ -142,7 +140,8 @@ func (s *ServerCoordinated) handleRequestLock(ctx *gin.Context) {
 		return
 	}
 
-	granted, fetchingNode := s.cache.RequestFetchLock(req.SegmentID, req.NodeID)
+	// Call coordinator directly
+	granted, fetchingNode := s.coordinator.RequestLeaderLock(req.SegmentID, req.NodeID)
 
 	ctx.JSON(http.StatusOK, gin.H{
 		"granted":       granted,
@@ -166,19 +165,14 @@ func (s *ServerCoordinated) handleReleaseLock(ctx *gin.Context) {
 		return
 	}
 
-	err := s.cache.ReleaseFetchLock(req.SegmentID, req.NodeID)
+	// Call coordinator directly
+	err := s.coordinator.ReleaseLeaderLock(req.SegmentID, req.NodeID)
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
 	ctx.JSON(http.StatusOK, gin.H{"status": "released"})
-}
-
-func hashKey(key string) string {
-	h := sha256.New()
-	h.Write([]byte(key))
-	return hex.EncodeToString(h.Sum(nil))
 }
 
 func getContentType(path string) string {
