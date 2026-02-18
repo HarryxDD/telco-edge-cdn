@@ -28,6 +28,10 @@ func (s *Server) Start(port string) error {
 		ctx.JSON(200, gin.H{"status": "healthy"})
 	})
 
+	router.GET("/debug/ring", func(ctx *gin.Context) {
+		ctx.JSON(200, s.ring.DumpStatus())
+	})
+
 	// API routes go to origin server
 	router.POST("/api/upload", s.proxyToOrigin)
 	router.GET("/api/videos", s.proxyToOrigin)

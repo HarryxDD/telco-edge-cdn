@@ -1,18 +1,25 @@
 #!/bin/bash
-# Script to remove network latency from containers
+# Remove network latencies using containerlab's built-in netem tools
 
 set -e
 
-CONTAINER=$1
+PREFIX="oulu"
+LAB_NAME="telco-cdn-oulu"
 
-if [ -z "$CONTAINER" ]; then
-    echo "Usage: $0 <container-name>"
-    echo "Example: $0 telco-cache-1"
-    exit 1
-fi
+remove_delay() {
+    local node=$1
+    echo "  [✓] ${node}: removing latency"
+    containerlab tools netem set -n "${PREFIX}-${LAB_NAME}-${node}" -i eth0 --delay 0ms 2>/dev/null || \
+        echo "  [!] Failed to set 0ms on ${node}, skipping"
+}
 
-echo "Removing latency from $CONTAINER..."
+echo "Removing latencies using containerlab netem:"
+echo ""
 
-docker exec $CONTAINER tc qdisc del dev eth0 root 2>/dev/null || echo "No latency configured"
+remove_delay "client"
+remove_delay "oulu-cache-1"
+remove_delay "oulu-cache-2"
+remove_delay "oulu-cache-3"
 
-echo "Latency removed"
+echo ""
+echo "[✓] Latencies removed!"

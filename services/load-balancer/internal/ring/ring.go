@@ -15,6 +15,13 @@ type Node struct {
 	Healthy bool
 }
 
+type NodeStatus struct {
+	ID      string `json:"id"`
+	Address string `json:"address"`
+	Load    int    `json:"load"`
+	Healthy bool   `json:"healthy"`
+}
+
 type BoundedLoadHashRing struct {
 	mu            sync.RWMutex
 	nodes         []*Node
@@ -71,6 +78,9 @@ func (b *BoundedLoadHashRing) GetNode(key string) *Node {
 	}
 
 	maxLoad := avgLoad * b.maxLoadFactor
+	if maxLoad < 1 {
+		maxLoad = 1
+	}
 
 	hash := hashString(key)
 
@@ -131,25 +141,47 @@ func (b *BoundedLoadHashRing) HealthCheck() {
 		b.mu.Lock()
 		for _, node := range b.nodes {
 			resp, err := b.httpClient.Get("http://" + node.Address + "/health")
-			if err != nil || resp.StatusCode != 200 {
+			
+			healthy := false
+			if err == nil && resp != nil && resp.StatusCode == 200 {
+				healthy = true
+			}
+			
+			if resp != nil {
+				resp.Body.Close()
+			}
+			
+			if !healthy {
 				if node.Healthy {
-					log.Printf("Node %s is DOWN", node.ID)
+					log.Printf("Node %s is DOWN (err: %v)", node.ID, err)
 				}
-
 				node.Healthy = false
 			} else {
 				if !node.Healthy {
 					log.Printf("Node %s is UP", node.ID)
 				}
-
 				node.Healthy = true
-			}
-			if resp != nil {
-				resp.Body.Close()
 			}
 		}
 		b.mu.Unlock()
 	}
+}
+
+func (b *BoundedLoadHashRing) DumpStatus() []NodeStatus {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	statuses := make([]NodeStatus, 0, len(b.nodes))
+	for _, n := range b.nodes {
+		statuses = append(statuses, NodeStatus{
+			ID:      n.ID,
+			Address: n.Address,
+			Load:    n.Load,
+			Healthy: n.Healthy,
+		})
+	}
+
+	return statuses
 }
 
 func hashString(s string) uint32 {

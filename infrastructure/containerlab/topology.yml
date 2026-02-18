@@ -1,2 +1,150 @@
-name: telco-cdn
+name: telco-cdn-oulu
+
+prefix: oulu
+
+mgmt:
+  network: oulu-mgmt
+  ipv4-subnet: 172.26.26.0/24
+
 topology:
+  defaults:
+    kind: linux
+  
+  groups:
+    cloud-tier:
+      labels:
+        tier: cloud
+        location: finland-central
+    mec-oulu:
+      labels:
+        tier: mec
+        location: oulu
+        mec-site: oulu
+    client-tier:
+      labels:
+        tier: client
+
+  nodes:
+    # CLOUD TIER
+    origin:
+      group: cloud-tier
+      image: telco-cdn-origin:latest
+      ports:
+        - "8081:8080"
+      env:
+        ADDR: ":8080"
+        USE_TLS: "false"
+        LOG_LEVEL: info
+        UPLOADS_DIR: uploads
+        HLS_DIR: hls
+        VIDEOS_PATH: videos.json
+      
+    ml-service:
+      group: cloud-tier
+      image: python:3.11-slim
+      ports:
+        - "8092:8090"
+      env:
+        PYTHONUNBUFFERED: "1"
+        PORT: "8090"
+      cmd: sleep infinity
+
+    # MEC OULU - Load Balancer
+    oulu-lb:
+      group: mec-oulu
+      image: telco-cdn-lb:latest
+      ports:
+        - "8080:8080"
+      env:
+        PORT: "8080"
+        LOG_LEVEL: info
+        CACHE_NODES: oulu-cache-1:oulu-cache-1:8080,oulu-cache-2:oulu-cache-2:8080,oulu-cache-3:oulu-cache-3:8080
+        HASH_ALGORITHM: bounded-consistent
+        HEALTH_CHECK_INTERVAL: "10s"
+    
+    # MEC OULU - Cache Nodes
+    oulu-cache-1:
+      group: mec-oulu
+      image: telco-cdn-cache:latest
+      ports:
+        - "8001:8080"
+      env:
+        PORT: "8080"
+        NODE_ID: cache-1
+        CACHE_SIZE_MB: "1024"
+        ORIGIN_URL: http://origin:8080
+        LOCATION: oulu
+        MEC_SITE: oulu
+        COORDINATOR_ENABLED: "true"
+        ELECTION_ENABLED: "true"
+        GOSSIP_ENABLED: "true"
+        CLUSTER_NODES: cache-1:oulu-cache-1:8080,cache-2:oulu-cache-2:8080,cache-3:oulu-cache-3:8080
+        PEERS: oulu-cache-2:8080,oulu-cache-3:8080
+
+    oulu-cache-2:
+      group: mec-oulu
+      image: telco-cdn-cache:latest
+      ports:
+        - "8002:8080"
+      env:
+        PORT: "8080"
+        NODE_ID: cache-2
+        CACHE_SIZE_MB: "1024"
+        ORIGIN_URL: http://origin:8080
+        LOCATION: oulu
+        MEC_SITE: oulu
+        COORDINATOR_ENABLED: "true"
+        ELECTION_ENABLED: "true"
+        GOSSIP_ENABLED: "true"
+        CLUSTER_NODES: cache-1:oulu-cache-1:8080,cache-2:oulu-cache-2:8080,cache-3:oulu-cache-3:8080
+        PEERS: oulu-cache-1:8080,oulu-cache-3:8080
+
+    oulu-cache-3:
+      group: mec-oulu
+      image: telco-cdn-cache:latest
+      ports:
+        - "8003:8080"
+      env:
+        PORT: "8080"
+        NODE_ID: cache-3
+        CACHE_SIZE_MB: "1024"
+        ORIGIN_URL: http://origin:8080
+        LOCATION: oulu
+        MEC_SITE: oulu
+        COORDINATOR_ENABLED: "true"
+        ELECTION_ENABLED: "true"
+        GOSSIP_ENABLED: "true"
+        CLUSTER_NODES: cache-1:oulu-cache-1:8080,cache-2:oulu-cache-2:8080,cache-3:oulu-cache-3:8080
+        PEERS: oulu-cache-1:8080,oulu-cache-2:8080
+
+    # CLIENT TIER
+    client:
+      group: client-tier
+      image: alpine:latest
+      ports:
+        - "8091:8080"
+      cmd: sleep infinity
+
+  links:
+    # Client → Oulu LB (last mile)
+    - endpoints: ["client:eth1", "oulu-lb:eth1"]
+    
+    # Oulu LB → Caches (internal MEC)
+    - endpoints: ["oulu-lb:eth2", "oulu-cache-1:eth1"]
+    - endpoints: ["oulu-lb:eth3", "oulu-cache-2:eth1"]
+    - endpoints: ["oulu-lb:eth4", "oulu-cache-3:eth1"]
+    
+    # Caches → Origin (backhaul)
+    - endpoints: ["oulu-cache-1:eth2", "origin:eth1"]
+    - endpoints: ["oulu-cache-2:eth2", "origin:eth2"]
+    - endpoints: ["oulu-cache-3:eth2", "origin:eth3"]
+    
+    # Caches → ML
+    - endpoints: ["oulu-cache-1:eth3", "ml-service:eth1"]
+    - endpoints: ["oulu-cache-2:eth3", "ml-service:eth2"]
+    - endpoints: ["oulu-cache-3:eth3", "ml-service:eth3"]
+    
+    # Inter-cache gossip (within Oulu MEC)
+    - endpoints: ["oulu-cache-1:eth4", "oulu-cache-2:eth4"]
+    - endpoints: ["oulu-cache-1:eth5", "oulu-cache-3:eth4"]
+    - endpoints: ["oulu-cache-2:eth5", "oulu-cache-3:eth5"]
