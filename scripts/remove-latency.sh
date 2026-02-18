@@ -20,6 +20,7 @@ remove_delay "client"
 remove_delay "oulu-cache-1"
 remove_delay "oulu-cache-2"
 remove_delay "oulu-cache-3"
+remove_delay "origin"
 
 echo ""
 echo "[✓] Latencies removed!"

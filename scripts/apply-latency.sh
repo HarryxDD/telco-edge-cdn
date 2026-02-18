@@ -18,13 +18,12 @@ add_delay() {
 echo "Applying latencies using containerlab netem:"
 echo ""
 
-# Client: last-mile latency (keep small so demo focuses on origin distance)
+# Client: optional small last-mile latency (keep small)
 add_delay "client" "7"
 
-# Caches: backhaul latency to origin (~200ms)
-add_delay "oulu-cache-1" "200" 
-add_delay "oulu-cache-2" "200"
-add_delay "oulu-cache-3" "200"
+# Origin: backhaul latency (~200ms) so MISS path is slow,
+# but cache↔cache and client↔cache stay fast
+add_delay "origin" "200"
 
 echo ""
-echo "[✓] Latencies applied (client 7ms, caches 200ms)"
+echo "[✓] Latencies applied (client 7ms, origin 200ms)"
