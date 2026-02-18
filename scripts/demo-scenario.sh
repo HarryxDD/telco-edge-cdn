@@ -54,7 +54,7 @@ echo ""
 
 # 6: Load test
 echo "Light Load Test (10 concurrent requests)..."
-echo "────────────────────────────────────────────────────────"
+echo "---"
 SEGMENT_URL="$LB_URL/hls/wolf-1770292891/segment_0000.m4s"
 for i in $(seq 1 10); do
     curl -s -o /dev/null -w "✓" "$SEGMENT_URL" &
