@@ -9,19 +9,24 @@ import (
 	"time"
 
 	"github.com/HarryxDD/telco-edge-cdn/cache-node/internal/coordination"
+	"github.com/HarryxDD/telco-edge-cdn/cache-node/internal/logging"
+	"github.com/HarryxDD/telco-edge-cdn/cache-node/internal/metrics"
 	"github.com/HarryxDD/telco-edge-cdn/cache-node/internal/service"
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 type ServerCoordinated struct {
-	cache       *service.EdgeCache
-	coordinator *coordination.Coordinator
+	cache        *service.EdgeCache
+	coordinator  *coordination.Coordinator
+	accessLogger *logging.AccessLogger
 }
 
-func NewServerCoordinated(cache *service.EdgeCache, coord *coordination.Coordinator) *ServerCoordinated {
+func NewServerCoordinated(cache *service.EdgeCache, coord *coordination.Coordinator, logger *logging.AccessLogger) *ServerCoordinated {
 	return &ServerCoordinated{
-		cache:       cache,
-		coordinator: coord,
+		cache:        cache,
+		coordinator:  coord,
+		accessLogger: logger,
 	}
 }
 
@@ -49,6 +54,9 @@ func (s *ServerCoordinated) Start(port string) error {
 	// API proxy to origin
 	router.GET("/api/videos", s.proxyToOrigin)
 
+	// Prometheus metrics endpoint
+	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
+
 	log.Printf("Edge cache %s starting on part %s", s.cache.NodeID, port)
 	return router.Run(":" + port)
 }
@@ -70,6 +78,7 @@ func (s *ServerCoordinated) handleCoordStatus(ctx *gin.Context) {
 }
 
 func (s *ServerCoordinated) serveHLS(ctx *gin.Context) {
+	start := time.Now()
 	videoId := ctx.Param("videoId")
 	filepath := ctx.Param("filepath")
 
@@ -77,13 +86,21 @@ func (s *ServerCoordinated) serveHLS(ctx *gin.Context) {
 	requestPath := fmt.Sprintf("/videos/%s%s", videoId, filepath)
 	cacheKey := requestPath
 
+	var cacheHit bool
+	var statusCode int = 200
+
 	// First try local cache
 	data, found := s.cache.Get(cacheKey)
+	cacheHit = found
+
 	if found {
 		log.Printf("[%s] COORDINATED HIT (local): %s", s.cache.NodeID, requestPath)
+		metrics.CacheHits.WithLabelValues(s.cache.NodeID, videoId).Inc()
 	} else {
 		// Cache miss - coordinate with cluster
 		log.Printf("[%s] COORDINATED MISS: %s", s.cache.NodeID, requestPath)
+		metrics.CacheMisses.WithLabelValues(s.cache.NodeID, videoId).Inc()
+
 		var peerID string
 		var err error
 
@@ -110,6 +127,13 @@ func (s *ServerCoordinated) serveHLS(ctx *gin.Context) {
 			log.Printf("[%s] Failed to store segment %s: %v", s.cache.NodeID, cacheKey, err)
 		}
 	}
+
+	// Log access
+	if s.accessLogger != nil {
+		s.logAccess(ctx, videoId, filepath, cacheHit, time.Since(start), int64(len(data)), statusCode)
+	}
+
+	metrics.RequestDuration.WithLabelValues(s.cache.NodeID, fmt.Sprintf("%v", cacheHit)).Observe(time.Since(start).Seconds())
 
 	contentType := getContentType(requestPath)
 	ctx.Header("Content-Type", contentType)
@@ -191,6 +215,22 @@ func (s *ServerCoordinated) handleReleaseLock(ctx *gin.Context) {
 	}
 
 	ctx.JSON(http.StatusOK, gin.H{"status": "released"})
+}
+
+func (s *ServerCoordinated) logAccess(ctx *gin.Context, videoId, filepath string, cacheHit bool, duration time.Duration, bytes int64, status int) {
+	s.accessLogger.Log(logging.AccessLog{
+		Timestamp:      time.Now(),
+		VideoID:        videoId,
+		ClientID:       ctx.ClientIP(),
+		SegmentPath:    filepath,
+		CacheHit:       cacheHit,
+		ResponseTimeMs: float64(duration.Milliseconds()),
+		BytesSent:      bytes,
+		StatusCode:     status,
+		Protocol:       "HLS",
+		BitrateKbps:    2000,
+		RebufferEvent:  false,
+	})
 }
 
 func getContentType(path string) string {
