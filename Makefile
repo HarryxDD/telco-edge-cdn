@@ -233,3 +233,27 @@ clean-all: clab-down clean-docker ## Nuclear cleanup (everything)
 	@echo "$(GREEN)All clean!$(NC)"
 
 .DEFAULT_GOAL := help
+
+# ML Stuff
+build-ml: ## Build ML service
+    docker build -t telco-cdn-ml:latest -f services/ml-service/Dockerfile services/ml-service
+
+build-fl-client: ## Build FL client
+    docker build -t edge-fl-client:latest -f services/edge-fl-client/Dockerfile services/edge-fl-client
+
+build-all-ml: build build-ml build-fl-client ## Build all images
+
+# FL monitoring
+fl-status: ## Show FL status
+    @echo "$(BLUE)FL Status:$(NC)"
+    @curl -s http://localhost:8092/status | jq .
+
+fl-logs: ## Show FL logs
+    @docker logs oulu-telco-cdn-oulu-ml-service 2>&1 | tail -20
+    @echo ""
+    @docker logs oulu-telco-cdn-oulu-oulu-fl-client 2>&1 | tail -20
+
+# Clean logs
+clean-logs: ## Clean access logs
+    @rm -rf data/oulu-logs/*.ndjson
+    @echo "Logs cleaned"
