@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent / 'features'))
 sys.path.insert(0, str(Path(__file__).parent / 'training'))
 
 from feature_engineering import build_features, FEATURE_COLS
-from train_local import train, predict
+from train import train, predict
 
 NODE_ID          = os.environ.get('NODE_ID',       'edge-node-01')
 LOG_PATH         = os.environ.get('LOG_PATH',
