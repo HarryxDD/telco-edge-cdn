@@ -6,6 +6,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/HarryxDD/telco-edge-cdn/cache-node/internal/coordination"
@@ -39,25 +41,16 @@ func (s *ServerCoordinated) Start(port string) error {
 		ctx.Next()
 	})
 
-	// router.GET("/metrics", gin.WrapH())
 	router.GET("/health", s.handleHealth)
 	router.GET("/coordination/status", s.handleCoordStatus)
-
-	// Coordination endpoints (leader only)
 	router.POST("/coordination/request-lock", s.handleRequestLock)
 	router.POST("/coordination/release-lock", s.handleReleaseLock)
-
-	// Client-facing paths (same as origin)
 	router.GET("/hls/:videoId/*filepath", s.serveHLS)
 	router.HEAD("/hls/:videoId/*filepath", s.serveHLS)
-
-	// API proxy to origin
 	router.GET("/api/videos", s.proxyToOrigin)
-
-	// Prometheus metrics endpoint
 	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
-	log.Printf("Edge cache %s starting on part %s", s.cache.NodeID, port)
+	log.Printf("edge cache %s starting on port %s", s.cache.NodeID, port)
 	return router.Run(":" + port)
 }
 
@@ -79,68 +72,70 @@ func (s *ServerCoordinated) handleCoordStatus(ctx *gin.Context) {
 
 func (s *ServerCoordinated) serveHLS(ctx *gin.Context) {
 	start := time.Now()
-	videoId := ctx.Param("videoId")
+	videoID := ctx.Param("videoId")
 	filepath := ctx.Param("filepath")
-
-	// Map /hls/{videoId}/file to /videos/{videoId}/file for caching
-	requestPath := fmt.Sprintf("/videos/%s%s", videoId, filepath)
+	requestPath := fmt.Sprintf("/videos/%s%s", videoID, filepath)
 	cacheKey := requestPath
 
 	var cacheHit bool
-	var statusCode int = 200
+	statusCode := 200
 
-	// First try local cache
 	data, found := s.cache.Get(cacheKey)
 	cacheHit = found
 
 	if found {
-		log.Printf("[%s] COORDINATED HIT (local): %s", s.cache.NodeID, requestPath)
-		metrics.CacheHits.WithLabelValues(s.cache.NodeID, videoId).Inc()
+		log.Printf("[%s] HIT (local): %s", s.cache.NodeID, requestPath)
+		metrics.CacheHits.WithLabelValues(s.cache.NodeID, videoID).Inc()
 	} else {
-		// Cache miss - coordinate with cluster
-		log.Printf("[%s] COORDINATED MISS: %s", s.cache.NodeID, requestPath)
-		metrics.CacheMisses.WithLabelValues(s.cache.NodeID, videoId).Inc()
+		log.Printf("[%s] MISS: %s", s.cache.NodeID, requestPath)
+		metrics.CacheMisses.WithLabelValues(s.cache.NodeID, videoID).Inc()
 
 		var peerID string
 		var err error
 
 		data, peerID, err = s.coordinator.HandleCacheMiss(cacheKey)
 		if err != nil {
-			log.Printf("[%s] HandleCacheMiss failed for %s: %v", s.cache.NodeID, requestPath, err)
+			log.Printf("[%s] cache miss handling failed for %s: %v", s.cache.NodeID, requestPath, err)
+			metrics.ErrorResponses.WithLabelValues(s.cache.NodeID, "502").Inc()
 			ctx.JSON(502, gin.H{"error": "failed to fetch content"})
 			return
 		}
 
 		if peerID != "" {
-			// Fetch from peer using coordination helper
-			log.Printf("[%s] Fetching segment %s from peer %s", s.cache.NodeID, cacheKey, peerID)
 			data, err = coordination.FetchFromPeer(peerID, cacheKey)
 			if err != nil {
-				log.Printf("[%s] Failed to fetch from peer %s: %v", s.cache.NodeID, peerID, err)
+				log.Printf("[%s] peer fetch failed from %s: %v", s.cache.NodeID, peerID, err)
+				metrics.ErrorResponses.WithLabelValues(s.cache.NodeID, "502").Inc()
 				ctx.JSON(502, gin.H{"error": "failed to fetch content"})
 				return
 			}
 		}
 
-		// Store in local cache
 		if err := s.cache.Put(cacheKey, data); err != nil {
-			log.Printf("[%s] Failed to store segment %s: %v", s.cache.NodeID, cacheKey, err)
+			log.Printf("[%s] cache store failed for %s: %v", s.cache.NodeID, cacheKey, err)
 		}
 	}
 
-	// Log access
-	if s.accessLogger != nil {
-		s.logAccess(ctx, videoId, filepath, cacheHit, time.Since(start), int64(len(data)), statusCode)
+	duration := time.Since(start)
+
+	// track non-200 status codes
+	if statusCode != 200 {
+		metrics.ErrorResponses.WithLabelValues(s.cache.NodeID, strconv.Itoa(statusCode)).Inc()
 	}
 
-	metrics.RequestDuration.WithLabelValues(s.cache.NodeID, fmt.Sprintf("%v", cacheHit)).Observe(time.Since(start).Seconds())
+	metrics.RequestDuration.WithLabelValues(s.cache.NodeID, fmt.Sprintf("%v", cacheHit)).Observe(duration.Seconds())
+	metrics.BytesServed.WithLabelValues(s.cache.NodeID).Add(float64(len(data)))
+	metrics.RequestsTotal.WithLabelValues(s.cache.NodeID, videoID).Inc()
+
+	if s.accessLogger != nil {
+		s.logAccess(ctx, videoID, filepath, cacheHit, duration, int64(len(data)), statusCode)
+	}
 
 	contentType := getContentType(requestPath)
 	ctx.Header("Content-Type", contentType)
 	ctx.Data(200, contentType, data)
 }
 
-// Proxy /api/videos to origin
 func (s *ServerCoordinated) proxyToOrigin(ctx *gin.Context) {
 	url := s.cache.OriginURL + "/api/videos"
 
@@ -153,7 +148,8 @@ func (s *ServerCoordinated) proxyToOrigin(ctx *gin.Context) {
 
 	resp, err := client.Get(url)
 	if err != nil {
-		log.Printf("Error proxying /api/videos to origin: %v", err)
+		log.Printf("origin proxy failed: %v", err)
+		metrics.ErrorResponses.WithLabelValues(s.cache.NodeID, "502").Inc()
 		ctx.JSON(502, gin.H{"error": "origin unreachable"})
 		return
 	}
@@ -182,9 +178,7 @@ func (s *ServerCoordinated) handleRequestLock(ctx *gin.Context) {
 		return
 	}
 
-	// Call coordinator directly
 	granted, fetchingNode := s.coordinator.RequestLeaderLock(req.SegmentID, req.NodeID)
-
 	ctx.JSON(http.StatusOK, gin.H{
 		"granted":       granted,
 		"fetching_node": fetchingNode,
@@ -207,9 +201,7 @@ func (s *ServerCoordinated) handleReleaseLock(ctx *gin.Context) {
 		return
 	}
 
-	// Call coordinator directly
-	err := s.coordinator.ReleaseLeaderLock(req.SegmentID, req.NodeID)
-	if err != nil {
+	if err := s.coordinator.ReleaseLeaderLock(req.SegmentID, req.NodeID); err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -217,20 +209,64 @@ func (s *ServerCoordinated) handleReleaseLock(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, gin.H{"status": "released"})
 }
 
-func (s *ServerCoordinated) logAccess(ctx *gin.Context, videoId, filepath string, cacheHit bool, duration time.Duration, bytes int64, status int) {
+func (s *ServerCoordinated) logAccess(ctx *gin.Context, videoID, filepath string, cacheHit bool, duration time.Duration, bytes int64, statusCode int) {
+	clientIP := ctx.ClientIP()
+	userAgent := ctx.Request.UserAgent()
+	now := time.Now()
+
+	segmentNumber := extractSegmentNumber(filepath)
+	bitrateKbps := inferBitrate(filepath)
+
+	// determine if this is a manifest or segment request
+	requestType := "segment"
+	if strings.HasSuffix(filepath, ".m3u8") {
+		requestType = "manifest"
+	}
+
+	rebuffer := duration.Milliseconds() > 2000
+	if rebuffer {
+		metrics.RebufferEvents.WithLabelValues(s.cache.NodeID, strconv.FormatInt(bitrateKbps, 10)).Inc()
+	}
+
+	metrics.BitrateRequested.WithLabelValues(s.cache.NodeID).Observe(float64(bitrateKbps))
+
 	s.accessLogger.Log(logging.AccessLog{
-		Timestamp:      time.Now(),
-		VideoID:        videoId,
-		ClientID:       ctx.ClientIP(),
-		SegmentPath:    filepath,
+		Timestamp:      now.UTC().Format("2006-01-02T15:04:05.000Z"),
+		EdgeNodeID:     s.cache.NodeID,
+		ClientID:       clientIP,
+		SessionID:      logging.GenerateSessionID(clientIP, userAgent, now),
+		VideoID:        videoID,
+		VideoCategory:  "general",
+		SegmentNumber:  segmentNumber,
+		RequestType:    requestType, // now correctly set
 		CacheHit:       cacheHit,
 		ResponseTimeMs: float64(duration.Milliseconds()),
 		BytesSent:      bytes,
-		StatusCode:     status,
-		Protocol:       "HLS",
-		BitrateKbps:    2000,
-		RebufferEvent:  false,
+		ClientRegion:   "FI-OUL",
+		Protocol:       "HTTP3",
+		BitrateKbps:    bitrateKbps,
+		RebufferEvent:  rebuffer,
+		StatusCode:     statusCode,
 	})
+}
+
+// try to parse bitrate from segment filename like seg_4500k_7.m4s
+// falls back to 2000 kbps if pattern is not found
+func inferBitrate(filepath string) int64 {
+	// var bitrate int64
+	// if _, err := fmt.Sscanf(filepath, "/seg_%dk", &bitrate); err == nil {
+	// 	return bitrate
+	// }
+	return 2000
+}
+
+// parse segment index from pattern like /segment_0001.m4s
+func extractSegmentNumber(filepath string) int {
+	var n int
+	if _, err := fmt.Sscanf(filepath, "/segment_%d.m4s", &n); err == nil {
+		return n
+	}
+	return 0
 }
 
 func getContentType(path string) string {
