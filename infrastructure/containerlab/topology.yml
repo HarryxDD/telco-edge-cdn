@@ -80,6 +80,8 @@ topology:
         GOSSIP_ENABLED: "true"
         CLUSTER_NODES: cache-1:oulu-cache-1:8080,cache-2:oulu-cache-2:8080,cache-3:oulu-cache-3:8080
         PEERS: oulu-cache-2:8080,oulu-cache-3:8080
+      binds:
+        - ../../data/oulu-logs:/shared/logs
 
     oulu-cache-2:
       group: mec-oulu
@@ -98,6 +100,8 @@ topology:
         GOSSIP_ENABLED: "true"
         CLUSTER_NODES: cache-1:oulu-cache-1:8080,cache-2:oulu-cache-2:8080,cache-3:oulu-cache-3:8080
         PEERS: oulu-cache-1:8080,oulu-cache-3:8080
+      binds:
+        - ../../data/oulu-logs:/shared/logs
 
     oulu-cache-3:
       group: mec-oulu
@@ -116,6 +120,20 @@ topology:
         GOSSIP_ENABLED: "true"
         CLUSTER_NODES: cache-1:oulu-cache-1:8080,cache-2:oulu-cache-2:8080,cache-3:oulu-cache-3:8080
         PEERS: oulu-cache-1:8080,oulu-cache-2:8080
+      binds:
+        - ../../data/oulu-logs:/shared/logs
+
+    oulu-fl-client:
+      kind: linux
+      image: edge-fl-client:latest
+      env:
+        SITE_ID: "oulu"
+        LOG_PATH: "/shared/logs/access.ndjson"
+        ML_SERVICE_URL: "http://ml-service:8090"
+        FL_UPDATE_INTERVAL: "120"
+      binds:
+        - ../../data/oulu-logs:/shared/logs
+        - ../../data/oulu-models:/app/models
 
     # CLIENT TIER
     client:
@@ -148,3 +166,5 @@ topology:
     - endpoints: ["oulu-cache-1:eth4", "oulu-cache-2:eth4"]
     - endpoints: ["oulu-cache-1:eth5", "oulu-cache-3:eth4"]
     - endpoints: ["oulu-cache-2:eth5", "oulu-cache-3:eth5"]
+
+    - endpoints: ["oulu-fl-client:eth1", "ml-service:eth4"]
