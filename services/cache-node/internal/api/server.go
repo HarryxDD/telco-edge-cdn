@@ -99,8 +99,10 @@ func (s *ServerCoordinated) serveHLS(ctx *gin.Context) {
 	if found {
 		log.Printf("[%s] HIT (local): %s", s.cache.NodeID, requestPath)
 		metrics.CacheHits.WithLabelValues(s.cache.NodeID, videoID).Inc()
+		cacheHit = true
 	} else {
 		log.Printf("[%s] MISS: %s", s.cache.NodeID, requestPath)
+		cacheHit = false
 		metrics.CacheMisses.WithLabelValues(s.cache.NodeID, videoID).Inc()
 
 		var peerID string
@@ -146,6 +148,12 @@ func (s *ServerCoordinated) serveHLS(ctx *gin.Context) {
 
 	contentType := getContentType(requestPath)
 	ctx.Header("Content-Type", contentType)
+	// Add X-Cache header for monitoring
+	if cacheHit {
+		ctx.Header("X-Cache", "HIT")
+	} else {
+		ctx.Header("X-Cache", "MISS")
+	}
 	ctx.Data(200, contentType, data)
 }
 

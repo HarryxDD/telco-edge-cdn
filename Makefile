@@ -257,6 +257,35 @@ shell-ml: ## Shell into ML service
 ps: ## Show containers
 	@docker ps --filter "name=oulu-telco-cdn-oulu" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 
+##@ Evaluation
+eval-all: ## Run complete evaluation suite
+	@chmod +x scripts/*.sh
+	@bash scripts/run-all-tests.sh
+
+eval-baseline: ## Test baseline performance (cold vs warm cache)
+	@chmod +x scripts/test-baseline.sh
+	@bash scripts/test-baseline.sh
+
+eval-cache-hit: ## Test cache hit ratio with Zipf distribution
+	@chmod +x scripts/test-cache-hit.sh
+	@bash scripts/test-cache-hit.sh
+
+eval-election: ## Test leader election and failover
+	@chmod +x scripts/test-election.sh
+	@bash scripts/test-election.sh
+
+eval-load: ## Run k6 load test
+	@echo "$(BLUE)Running k6 load test...$(NC)"
+	@cd benchmarks/load-testing && k6 run --out json=results.json k6-test.js
+
+eval-analyze: ## Analyze results and generate graphs
+	@echo "$(BLUE)Analyzing results...$(NC)"
+	@python3 scripts/analyze-results.py
+
+eval-collect: ## Collect metrics from Prometheus
+	@chmod +x scripts/collect-metrics.sh
+	@bash scripts/collect-metrics.sh 60
+
 ##@ Demo
 demo-1: ## Demo: Basic fetch
 	@echo "$(BLUE)Demo 1: MEC serving content$(NC)"
@@ -303,3 +332,27 @@ clean-all: clab-down clean-docker ## Nuclear cleanup
 	@echo "$(GREEN)All clean!$(NC)"
 
 .DEFAULT_GOAL := help
+
+# ML Stuff
+build-ml: ## Build ML service
+	docker build -t telco-cdn-ml:latest -f services/ml-service/Dockerfile services/ml-service
+
+build-fl-client: ## Build FL client
+	docker build -t edge-fl-client:latest -f services/edge-fl-client/Dockerfile services/edge-fl-client
+
+build-all-ml: build build-ml build-fl-client ## Build all images
+
+# FL monitoring
+fl-status: ## Show FL status
+	@echo "$(BLUE)FL Status:$(NC)"
+	@curl -s http://localhost:8092/status | jq .
+
+fl-logs: ## Show FL logs
+	@docker logs oulu-telco-cdn-oulu-ml-service 2>&1 | tail -20
+	@echo ""
+	@docker logs oulu-telco-cdn-oulu-oulu-fl-client 2>&1 | tail -20
+
+# Clean logs
+clean-logs: ## Clean access logs
+	@rm -rf data/oulu-logs/*.ndjson
+	@echo "Logs cleaned"

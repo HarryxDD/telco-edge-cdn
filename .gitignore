@@ -86,6 +86,7 @@ benchmarks/reports/*.pdf
 *.key
 !*example.env
 
+data/evaluation-results/**/k6-results.json
 # Data directories
 data/videos.json
 data/logs/
