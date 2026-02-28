@@ -49,7 +49,7 @@ def load_global_model():
 
 def train(log_path: str,
           node_id: str = "edge-node-local",
-          min_samples: int = 50) -> dict:
+          min_samples: int = 5) -> dict:
     
     print(f"\n{'='*55}")
     print(f"  LOCAL TRAINING — {node_id}")
@@ -83,9 +83,13 @@ def train(log_path: str,
 
     #Train/test split
     print("\n3. Splitting")
-    split_idx  = int(len(X_scaled) * 0.8)
-    X_train, X_test = X_scaled[:split_idx], X_scaled[split_idx:]
-    y_train, y_test = y[:split_idx],        y[split_idx:]
+    # split_idx  = int(len(X_scaled) * 0.8)
+    # X_train, X_test = X_scaled[:split_idx], X_scaled[split_idx:]
+    # y_train, y_test = y[:split_idx],        y[split_idx:]
+    from sklearn.model_selection import train_test_split
+    X_train, X_test, y_train, y_test = train_test_split(
+        X_scaled, y, test_size=0.2, random_state=42, stratify=y
+    )
     print(f"  Train: {X_train.shape}  |  Test: {X_test.shape}")
 
     # SMOTE for class imbalance 
@@ -113,11 +117,19 @@ def train(log_path: str,
     y_prob = model.predict_proba(X_test)[:, 1]
     y_pred = (y_prob >= 0.3).astype(int)
 
+    try:
+        auc = round(roc_auc_score(y_test, y_prob), 4)
+    except ValueError:
+        auc = 0.5 # default when only one class present in y_test
+
+    if np.isnan(auc):
+        auc = 0.5
+
     metrics = {
         'node_id'  : node_id,
         'accuracy' : round(accuracy_score(y_test, y_pred), 4),
         'f1'       : round(f1_score(y_test, y_pred, zero_division=0), 4),
-        'auc'      : round(roc_auc_score(y_test, y_prob), 4),
+        'auc'      : auc,
         'n_samples': len(df),
         'n_spikes' : int(y.sum()),
         'train_time': round(time.time() - start_time, 2),

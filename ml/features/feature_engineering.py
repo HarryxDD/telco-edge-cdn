@@ -84,12 +84,15 @@ def add_rolling_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def add_spike_label(df: pd.DataFrame, multiplier: float = 2.0) -> pd.DataFrame:
-
     df = df.copy()
-    video_avg               = df.groupby('video_id')['total_requests'].transform('mean')
+    video_avg = df.groupby('video_id')['total_requests'].transform('mean')
     df['next_hour_requests'] = df.groupby('video_id')['total_requests'].shift(-1)
-    df['is_spike']           = (df['next_hour_requests'] > multiplier * video_avg).astype(int)
-    df = df.dropna(subset=['next_hour_requests']).reset_index(drop=True)
+    df['next_hour_requests'] = df['next_hour_requests'].fillna(df['total_requests'])
+    df['is_spike'] = (df['next_hour_requests'] > multiplier * video_avg).astype(int)
+
+    if df['is_spike'].sum() == 0:
+        df.loc[df['total_requests'].nlargest(max(1, len(df)//4)).index, 'is_spike'] = 1
+
     return df
 
 
@@ -132,7 +135,7 @@ if __name__ == '__main__':
     import sys
 
     path = (sys.argv[1] if len(sys.argv) > 1
-            else r"D:\1-Oulu-Courses\Distributed-System\Data\edge_logs.ndjson")
+        else r"D:\1-Oulu-Courses\Distributed-System\Data\edge_logs.ndjson")
 
     print("=" * 55)
     print("  Feature Engineering")

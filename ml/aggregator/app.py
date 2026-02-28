@@ -28,6 +28,8 @@ prom_fl_nodes        = Gauge('fl_participating_nodes',
                               'Number of nodes in last FL round')
 prom_fl_f1           = Gauge('fl_avg_f1_score',
                               'Average F1 score of last FL round')
+prom_fl_accuracy = Gauge('fl_avg_accuracy',
+                          'Average accuracy of last FL round')
 prom_fl_auc          = Gauge('fl_avg_auc',
                               'Average AUC score of last FL round')
 prom_fl_pending      = Gauge('fl_pending_updates',
@@ -51,17 +53,16 @@ state_lock = threading.Lock()
 
 
 def load_initial_model():
-    if GLOBAL_MODEL_PATH.exists():
-        with open(GLOBAL_MODEL_PATH,  'rb') as f:
-            state['global_model']  = pickle.load(f)
+    if GLOBAL_MODEL_PATH.exists() and GLOBAL_SCALER_PATH.exists():
+        with open(GLOBAL_MODEL_PATH, 'rb') as f:
+            state['global_model'] = pickle.load(f)
         with open(GLOBAL_SCALER_PATH, 'rb') as f:
             state['global_scaler'] = pickle.load(f)
         prom_fl_model_ready.set(1)
         print(f"Loaded initial global model from {GLOBAL_MODEL_PATH}")
     else:
         prom_fl_model_ready.set(0)
-        print("No initial model found")
-
+        print("No initial model found, waiting for FL rounds")
 load_initial_model()
 
 
@@ -75,8 +76,8 @@ def federated_average(node_updates: dict):
     best_node_id = best_node[0]
     best_f1      = best_node[1]['metrics'].get('f1', 0)
 
-    avg_f1  = np.mean([v['metrics'].get('f1',  0) for v in node_updates.values()])
-    avg_auc = np.mean([v['metrics'].get('auc', 0) for v in node_updates.values()])
+    avg_f1  = np.nanmean([v['metrics'].get('f1',  0) for v in node_updates.values()])
+    avg_auc = np.nanmean([v['metrics'].get('auc', 0) for v in node_updates.values()])
 
     print(f"  FedAvg : {len(node_updates)} nodes")
     print(f"  Best   : {best_node_id} (F1={best_f1:.4f})")
@@ -108,12 +109,15 @@ def maybe_aggregate():
                 state['global_model'] = result['model']
                 state['fl_round']    += 1
 
+                avg_accuracy = np.nanmean([v['metrics'].get('accuracy', 0) for v in updates.values()])
+                
                 round_summary = {
                     'round'    : state['fl_round'],
                     'timestamp': datetime.utcnow().isoformat(),
                     'n_nodes'  : result['n_nodes'],
                     'avg_f1'   : result['avg_f1'],
                     'avg_auc'  : result['avg_auc'],
+                    'avg_accuracy': round(float(avg_accuracy), 4),
                     'best_node': result['best_node'],
                     'nodes'    : list(updates.keys()),
                 }
@@ -122,6 +126,7 @@ def maybe_aggregate():
                 prom_fl_rounds.inc()
                 prom_fl_nodes.set(result['n_nodes'])
                 prom_fl_f1.set(result['avg_f1'])
+                prom_fl_accuracy.set(avg_accuracy)
                 prom_fl_auc.set(result['avg_auc'])
                 prom_fl_pending.set(0)
                 prom_fl_model_ready.set(1)
@@ -213,14 +218,14 @@ def receive_update():
         return jsonify({'error': str(e)}), 500
 
 
-# GET /metrics  -Prometheus format 
 @app.route('/metrics')
 def get_metrics_prometheus():
     with state_lock:
         recent = state['round_history'][-1] if state['round_history'] else {}
         prom_fl_nodes.set(recent.get('n_nodes', 0))
-        prom_fl_f1.set(recent.get('avg_f1',    0))
-        prom_fl_auc.set(recent.get('avg_auc',  0))
+        prom_fl_f1.set(recent.get('avg_f1', 0))
+        prom_fl_auc.set(recent.get('avg_auc', 0))
+        prom_fl_accuracy.set(recent.get('avg_accuracy', 0))
         prom_fl_pending.set(len(state['node_updates']))
         prom_fl_model_ready.set(1 if state['global_model'] else 0)
 
