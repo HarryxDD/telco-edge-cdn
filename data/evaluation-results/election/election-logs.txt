@@ -1,0 +1,2 @@
+2026/02/28 10:20:02 [bully] node 2 acknowledges leader 3
+2026/02/28 10:20:37 [bully] Node 2 became leader

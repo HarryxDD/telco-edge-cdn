@@ -12,10 +12,10 @@ import (
 
 // inflightRequest tracks a single in-flight fetch request
 type inflightRequest struct {
-	data  []byte
-	peer  string
-	err   error
-	done  chan struct{}
+	data []byte
+	peer string
+	err  error
+	done chan struct{}
 }
 
 // Coordinator integrates leader election, gossip, and lock management
@@ -116,6 +116,12 @@ func (c *Coordinator) HandleCacheMiss(segmentID string) ([]byte, string, error) 
 
 	// No peer has it - request lock to fetch from origin
 	granted, fetchingNode := c.requestFetchLockFromLeader(segmentID)
+
+	// TODO: Future improvement - implement request queueing during leader election
+	// If fetchingNode is empty, it means leader is unavailable. Currently this will
+	// timeout after 6s. A production system would queue these requests and process
+	// them after election completes (similar to Kafka/etcd approach).
+
 	if granted {
 		log.Printf("[COORDINATOR] Got lock for %s, fetching from origin", segmentID)
 
@@ -138,11 +144,11 @@ func (c *Coordinator) HandleCacheMiss(segmentID string) ([]byte, string, error) 
 	// Lock denied - another node is fetching
 	// Wait with retries for the fetching node to broadcast
 	log.Printf("[COORDINATOR] Node %s is fetching %s, waiting for broadcast...", fetchingNode, segmentID)
-	
+
 	// Retry up to 6 times (1s intervals = 6s max wait, enough for origin fetch)
 	for i := 0; i < 6; i++ {
 		time.Sleep(1 * time.Second)
-		
+
 		if peerID, found := c.gossip.FindPeerWithSegment(segmentID); found {
 			log.Printf("[COORDINATOR] Segment %s now available at peer %s (after %ds)", segmentID, peerID, i+1)
 			req.peer = peerID
