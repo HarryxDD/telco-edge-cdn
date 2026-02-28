@@ -13,10 +13,12 @@ URL="http://localhost:8080/hls/${VIDEO_ID}/${SEGMENT}"
 measure_latency() {
     local output_file=$1
     local iterations=$2
+    local delay=${3:-0}  # Optional delay between requests in seconds
     > "$output_file"
     for i in $(seq 1 $iterations); do
         time_ms=$(curl -o /dev/null -s -w "%{time_total}" "$URL")
         echo "$time_ms * 1000" | bc >> "$output_file"
+        [ "$delay" != "0" ] && sleep "$delay"
     done
 }
 
@@ -31,8 +33,15 @@ first_request_time=$(curl -o /dev/null -s -w "%{time_total}" "$URL")
 first_request_ms=$(echo "$first_request_time * 1000" | bc)
 echo "$first_request_ms" > "$OUTPUT_DIR/first-request.txt"
 
+echo "Warming up all cache nodes (10 requests to populate caches)..."
+for i in $(seq 1 10); do
+    curl -o /dev/null -s "$URL"
+    sleep 0.1
+done
+sleep 1
+
 echo "Testing warm cache (100 requests)..."
-measure_latency "$OUTPUT_DIR/warm-cache-latency.txt" 100
+measure_latency "$OUTPUT_DIR/warm-cache-latency.txt" 100 0.05
 
 echo "Testing direct origin (50 requests)..."
 ORIGIN_URL="http://localhost:8081/hls/${VIDEO_ID}/${SEGMENT}"

@@ -1,0 +1,8 @@
+NAME                               CPU %     MEM USAGE / LIMIT
+oulu-telco-cdn-oulu-ml-service     0.00%     800KiB / 30.64GiB
+oulu-telco-cdn-oulu-client         0.00%     700KiB / 30.64GiB
+oulu-telco-cdn-oulu-origin         0.46%     6.344MiB / 30.64GiB
+oulu-telco-cdn-oulu-oulu-cache-3   0.87%     42.4MiB / 30.64GiB
+oulu-telco-cdn-oulu-oulu-cache-2   0.69%     64.73MiB / 30.64GiB
+oulu-telco-cdn-oulu-oulu-lb        0.00%     12.86MiB / 30.64GiB
+oulu-telco-cdn-oulu-oulu-cache-1   0.64%     100MiB / 30.64GiB

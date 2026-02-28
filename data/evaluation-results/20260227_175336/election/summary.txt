@@ -1,2 +1,0 @@
-Election Time: 11s
-Availability: 10/10

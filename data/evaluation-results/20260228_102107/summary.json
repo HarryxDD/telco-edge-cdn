@@ -1,0 +1,12 @@
+{
+  "baseline": {
+    "Cold Cache P95 (ms)": "2018.13",
+    "Warm Cache P95 (ms)": "10.58",
+    "Speedup Factor": "241.7x"
+  },
+  "cache": {
+    "Hit Ratio": "98.8%",
+    "Total Requests": 1000,
+    "Cache Hits": 988
+  }
+}

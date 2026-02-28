@@ -1,3 +1,0 @@
-Collecting metrics (10s)...
-Prometheus not running, skipping Prometheus metrics
-Results: data/evaluation-results/20260227_181305

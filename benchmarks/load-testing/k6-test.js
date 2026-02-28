@@ -127,10 +127,10 @@ function textSummary(data, options = {}) {
   const duration = data.metrics.http_req_duration;
   if (duration) {
     summary += `${indent}Request Duration:\n`;
-    summary += `${indent}  avg: ${duration.values.avg.toFixed(2)}ms\n`;
-    summary += `${indent}  med: ${duration.values.med.toFixed(2)}ms\n`;
-    summary += `${indent}  p95: ${duration.values['p(95)'].toFixed(2)}ms\n`;
-    summary += `${indent}  p99: ${duration.values['p(99)'].toFixed(2)}ms\n\n`;
+    summary += `${indent}  avg: ${duration.values.avg?.toFixed(2) || 'N/A'}ms\n`;
+    summary += `${indent}  med: ${duration.values.med?.toFixed(2) || 'N/A'}ms\n`;
+    summary += `${indent}  p95: ${duration.values['p(95)']?.toFixed(2) || 'N/A'}ms\n`;
+    summary += `${indent}  p99: ${duration.values['p(99)']?.toFixed(2) || 'N/A'}ms\n\n`;
   }
   
   // Cache metrics (if available)
