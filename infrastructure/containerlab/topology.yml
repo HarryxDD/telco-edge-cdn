@@ -9,7 +9,7 @@ mgmt:
 topology:
   defaults:
     kind: linux
-  
+
   groups:
     cloud-tier:
       labels:
@@ -29,6 +29,7 @@ topology:
     origin:
       group: cloud-tier
       image: telco-cdn-origin:latest
+      mgmt-ipv4: 172.26.26.10
       ports:
         - "8081:8080"
       env:
@@ -38,34 +39,64 @@ topology:
         UPLOADS_DIR: uploads
         HLS_DIR: hls
         VIDEOS_PATH: videos.json
-      
+      binds:
+        - ../../data/origin-uploads:/app/uploads
+        - ../../data/origin-hls:/app/hls
+        - ../../data/videos.json:/app/videos.json
+
     ml-service:
       group: cloud-tier
-      image: python:3.11-slim
+      image: telco-cdn-ml:latest
+      mgmt-ipv4: 172.26.26.11
       ports:
-        - "8092:8090"
+        - "8092:8092"
       env:
-        PYTHONUNBUFFERED: "1"
-        PORT: "8090"
-      cmd: sleep infinity
+        MODELS_DIR: /app/models
+      binds:
+        - ../../data/models:/app/models
+
+    prometheus:
+      group: cloud-tier
+      image: prom/prometheus:latest
+      mgmt-ipv4: 172.26.26.12
+      ports:
+        - "9090:9090"
+      binds:
+        - ../../infrastructure/monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+
+    grafana:
+      group: cloud-tier
+      image: grafana/grafana:latest
+      mgmt-ipv4: 172.26.26.13
+      ports:
+        - "3000:3000"
+      env:
+        GF_SECURITY_ADMIN_PASSWORD: admin
+        GF_USERS_ALLOW_SIGN_UP: "false"
+      binds:
+        - ../../infrastructure/monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+        - ../../infrastructure/monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
 
     # MEC OULU - Load Balancer
     oulu-lb:
       group: mec-oulu
       image: telco-cdn-lb:latest
+      mgmt-ipv4: 172.26.26.20
       ports:
         - "8080:8080"
       env:
         PORT: "8080"
+        ORIGIN_URL: "http://origin:8080"
         LOG_LEVEL: info
         CACHE_NODES: oulu-cache-1:oulu-cache-1:8080,oulu-cache-2:oulu-cache-2:8080,oulu-cache-3:oulu-cache-3:8080
         HASH_ALGORITHM: bounded-consistent
         HEALTH_CHECK_INTERVAL: "10s"
-    
+
     # MEC OULU - Cache Nodes
     oulu-cache-1:
       group: mec-oulu
       image: telco-cdn-cache:latest
+      mgmt-ipv4: 172.26.26.21
       ports:
         - "8001:8080"
       env:
@@ -80,12 +111,16 @@ topology:
         GOSSIP_ENABLED: "true"
         CLUSTER_NODES: cache-1:oulu-cache-1:8080,cache-2:oulu-cache-2:8080,cache-3:oulu-cache-3:8080
         PEERS: oulu-cache-2:8080,oulu-cache-3:8080
+        ML_AGGREGATOR_URL: http://ml-service:8092
       binds:
+        - ../../data/logs/cache-1:/app/logs
         - ../../data/oulu-logs:/shared/logs
+        - ../../data/cache-1:/app/data
 
     oulu-cache-2:
       group: mec-oulu
       image: telco-cdn-cache:latest
+      mgmt-ipv4: 172.26.26.22
       ports:
         - "8002:8080"
       env:
@@ -100,12 +135,16 @@ topology:
         GOSSIP_ENABLED: "true"
         CLUSTER_NODES: cache-1:oulu-cache-1:8080,cache-2:oulu-cache-2:8080,cache-3:oulu-cache-3:8080
         PEERS: oulu-cache-1:8080,oulu-cache-3:8080
+        ML_AGGREGATOR_URL: http://ml-service:8092
       binds:
+        - ../../data/logs/cache-2:/app/logs
         - ../../data/oulu-logs:/shared/logs
+        - ../../data/cache-2:/app/data
 
     oulu-cache-3:
       group: mec-oulu
       image: telco-cdn-cache:latest
+      mgmt-ipv4: 172.26.26.23
       ports:
         - "8003:8080"
       env:
@@ -120,51 +159,101 @@ topology:
         GOSSIP_ENABLED: "true"
         CLUSTER_NODES: cache-1:oulu-cache-1:8080,cache-2:oulu-cache-2:8080,cache-3:oulu-cache-3:8080
         PEERS: oulu-cache-1:8080,oulu-cache-2:8080
+        ML_AGGREGATOR_URL: http://ml-service:8092
       binds:
+        - ../../data/logs/cache-3:/app/logs
         - ../../data/oulu-logs:/shared/logs
+        - ../../data/cache-3:/app/data
 
-    oulu-fl-client:
+    # FL clients - one per cache node
+    oulu-fl-client-1:
       kind: linux
       image: edge-fl-client:latest
+      mgmt-ipv4: 172.26.26.31
       env:
-        SITE_ID: "oulu"
-        LOG_PATH: "/shared/logs/access.ndjson"
-        ML_SERVICE_URL: "http://ml-service:8090"
-        FL_UPDATE_INTERVAL: "120"
+        SITE_ID: oulu
+        NODE_ID: cache-1
+        LOG_PATH: /app/logs/access_cache-1.ndjson
+        AGGREGATOR_URL: http://ml-service:8092
+        TRAIN_INTERVAL: "10"
+        MODELS_DIR: /app/models
       binds:
-        - ../../data/oulu-logs:/shared/logs
-        - ../../data/oulu-models:/app/models
+        - ../../data/logs/cache-1:/app/logs:ro
+        - ../../data/models:/app/models
+
+    oulu-fl-client-2:
+      kind: linux
+      image: edge-fl-client:latest
+      mgmt-ipv4: 172.26.26.32
+      env:
+        SITE_ID: oulu
+        NODE_ID: cache-2
+        LOG_PATH: /app/logs/access_cache-2.ndjson
+        AGGREGATOR_URL: http://ml-service:8092
+        TRAIN_INTERVAL: "10"
+        MODELS_DIR: /app/models
+      binds:
+        - ../../data/logs/cache-2:/app/logs:ro
+        - ../../data/models:/app/models
+
+    oulu-fl-client-3:
+      kind: linux
+      image: edge-fl-client:latest
+      mgmt-ipv4: 172.26.26.33
+      env:
+        SITE_ID: oulu
+        NODE_ID: cache-3
+        LOG_PATH: /app/logs/access_cache-3.ndjson
+        AGGREGATOR_URL: http://ml-service:8092
+        TRAIN_INTERVAL: "10"
+        MODELS_DIR: /app/models
+      binds:
+        - ../../data/logs/cache-3:/app/logs:ro
+        - ../../data/models:/app/models
 
     # CLIENT TIER
     client:
       group: client-tier
       image: alpine:latest
+      mgmt-ipv4: 172.26.26.40
       ports:
         - "8091:8080"
       cmd: sleep infinity
 
   links:
-    # Client → Oulu LB (last mile)
+    # client to LB
     - endpoints: ["client:eth1", "oulu-lb:eth1"]
-    
-    # Oulu LB → Caches (internal MEC)
+
+    # LB to cache nodes
     - endpoints: ["oulu-lb:eth2", "oulu-cache-1:eth1"]
     - endpoints: ["oulu-lb:eth3", "oulu-cache-2:eth1"]
     - endpoints: ["oulu-lb:eth4", "oulu-cache-3:eth1"]
-    
-    # Caches → Origin (backhaul)
+
+    # cache nodes to origin
     - endpoints: ["oulu-cache-1:eth2", "origin:eth1"]
     - endpoints: ["oulu-cache-2:eth2", "origin:eth2"]
     - endpoints: ["oulu-cache-3:eth2", "origin:eth3"]
-    
-    # Caches → ML
+
+    # cache nodes to ml-service
     - endpoints: ["oulu-cache-1:eth3", "ml-service:eth1"]
     - endpoints: ["oulu-cache-2:eth3", "ml-service:eth2"]
     - endpoints: ["oulu-cache-3:eth3", "ml-service:eth3"]
-    
-    # Inter-cache gossip (within Oulu MEC)
+
+    # inter-cache gossip
     - endpoints: ["oulu-cache-1:eth4", "oulu-cache-2:eth4"]
     - endpoints: ["oulu-cache-1:eth5", "oulu-cache-3:eth4"]
     - endpoints: ["oulu-cache-2:eth5", "oulu-cache-3:eth5"]
 
-    - endpoints: ["oulu-fl-client:eth1", "ml-service:eth4"]
+    # fl clients to ml-service
+    - endpoints: ["oulu-fl-client-1:eth1", "ml-service:eth4"]
+    - endpoints: ["oulu-fl-client-2:eth1", "ml-service:eth5"]
+    - endpoints: ["oulu-fl-client-3:eth1", "ml-service:eth6"]
+
+    # prometheus to cache nodes and ml-service
+    - endpoints: ["prometheus:eth1", "oulu-cache-1:eth6"]
+    - endpoints: ["prometheus:eth2", "oulu-cache-2:eth6"]
+    - endpoints: ["prometheus:eth3", "oulu-cache-3:eth6"]
+    - endpoints: ["prometheus:eth4", "ml-service:eth7"]
+
+    # grafana to prometheus
+    - endpoints: ["grafana:eth1", "prometheus:eth5"]
