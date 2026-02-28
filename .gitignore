@@ -104,6 +104,7 @@ clab-*/
 
 # Client node modules
 services/client/frontend/node_modules/
+services/client/frontend/dist/
 
 # Build artifacts
 *.pyc
