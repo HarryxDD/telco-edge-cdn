@@ -61,12 +61,11 @@ var (
 	)
 
 	// tracks unique active sessions per node in a time window
-	ActiveSessions = promauto.NewGaugeVec(
+	ActiveSessions = promauto.NewGauge(
 		prometheus.GaugeOpts{
 			Name: "cdn_active_sessions",
-			Help: "Active sessions per edge node",
+			Help: "Active user sessions across all edge nodes",
 		},
-		[]string{"node_id"},
 	)
 
 	// distribution of requested bitrates, helps spot quality trends

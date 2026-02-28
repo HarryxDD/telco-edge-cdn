@@ -41,7 +41,8 @@ func main() {
 	log.Printf("Starting cache node: ID=%d, Port=%d", nodeID, port)
 	log.Printf("Cluster nodes: %v", electionNodes)
 
-	logPath := fmt.Sprintf("/app/logs/access_%s.ndjson", nodeIDStr)
+	logDir := getEnv("LOG_DIR", "/app/logs")
+	logPath := fmt.Sprintf("%s/access_%s.ndjson", logDir, nodeIDStr)
 	accessLogger, err := logging.NewAccessLogger(logPath, nodeIDStr)
 	if err != nil {
 		log.Printf("Warning: Failed to create access logger: %v", err)

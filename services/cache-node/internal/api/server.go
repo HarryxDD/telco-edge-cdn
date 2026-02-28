@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/HarryxDD/telco-edge-cdn/cache-node/internal/coordination"
@@ -19,17 +20,29 @@ import (
 )
 
 type ServerCoordinated struct {
-	cache        *service.EdgeCache
-	coordinator  *coordination.Coordinator
-	accessLogger *logging.AccessLogger
+	cache          *service.EdgeCache
+	coordinator    *coordination.Coordinator
+	accessLogger   *logging.AccessLogger
+	activeSessions sync.Map
 }
 
 func NewServerCoordinated(cache *service.EdgeCache, coord *coordination.Coordinator, logger *logging.AccessLogger) *ServerCoordinated {
-	return &ServerCoordinated{
+	s := &ServerCoordinated{
 		cache:        cache,
 		coordinator:  coord,
 		accessLogger: logger,
 	}
+
+	// background session cleanup every 10 seconds
+	go func() {
+		for range time.NewTicker(10 * time.Second).C {
+			metrics.ActiveSessions.Set(
+				float64(s.countActiveSessions()),
+			)
+		}
+	}()
+
+	return s
 }
 
 func (s *ServerCoordinated) Start(port string) error {
@@ -209,10 +222,28 @@ func (s *ServerCoordinated) handleReleaseLock(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, gin.H{"status": "released"})
 }
 
+func (s *ServerCoordinated) countActiveSessions() int {
+	now := time.Now()
+	count := 0
+	s.activeSessions.Range(func(k, v interface{}) bool {
+		if now.Sub(v.(time.Time)) < 2*time.Minute {
+			count++
+		} else {
+			s.activeSessions.Delete(k)
+		}
+		return true
+	})
+	return count
+}
+
 func (s *ServerCoordinated) logAccess(ctx *gin.Context, videoID, filepath string, cacheHit bool, duration time.Duration, bytes int64, statusCode int) {
 	clientIP := ctx.ClientIP()
 	userAgent := ctx.Request.UserAgent()
 	now := time.Now()
+
+	sessionID := logging.GenerateSessionID(clientIP, userAgent, now)
+	s.activeSessions.Store(sessionID, now)
+	metrics.ActiveSessions.Set(float64(s.countActiveSessions()))
 
 	segmentNumber := extractSegmentNumber(filepath)
 	bitrateKbps := inferBitrate(filepath)
@@ -234,7 +265,7 @@ func (s *ServerCoordinated) logAccess(ctx *gin.Context, videoID, filepath string
 		Timestamp:      now.UTC().Format("2006-01-02T15:04:05.000Z"),
 		EdgeNodeID:     s.cache.NodeID,
 		ClientID:       clientIP,
-		SessionID:      logging.GenerateSessionID(clientIP, userAgent, now),
+		SessionID:      sessionID,
 		VideoID:        videoID,
 		VideoCategory:  "general",
 		SegmentNumber:  segmentNumber,
@@ -250,14 +281,16 @@ func (s *ServerCoordinated) logAccess(ctx *gin.Context, videoID, filepath string
 	})
 }
 
-// try to parse bitrate from segment filename like seg_4500k_7.m4s
-// falls back to 2000 kbps if pattern is not found
+// have random but consistent bitrate inference based on filepath, for logging purposes
 func inferBitrate(filepath string) int64 {
-	// var bitrate int64
-	// if _, err := fmt.Sscanf(filepath, "/seg_%dk", &bitrate); err == nil {
-	// 	return bitrate
-	// }
-	return 2000
+	bitrates := []int64{500, 1000, 1500, 2000, 2500, 3000, 4000, 5000}
+
+	// use filepath hash for consistent bitrate per segment
+	hash := int64(0)
+	for _, c := range filepath {
+		hash += int64(c)
+	}
+	return bitrates[hash%int64(len(bitrates))]
 }
 
 // parse segment index from pattern like /segment_0001.m4s

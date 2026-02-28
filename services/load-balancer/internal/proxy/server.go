@@ -4,6 +4,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/HarryxDD/telco-edge-cdn/load-balancer/internal/ring"
@@ -93,7 +94,9 @@ func (s *Server) forwardRequest(ctx *gin.Context, targetURL, nodeID string) {
 }
 
 func (s *Server) proxyToOrigin(ctx *gin.Context) {
-	// Route to origin server (for API requests like upload, video list)
-	originURL := "http://origin:8443" + ctx.Request.URL.Path
-	s.forwardRequest(ctx, originURL, "origin")
+	originURL := os.Getenv("ORIGIN_URL")
+	if originURL == "" {
+		originURL = "http://origin:8080"
+	}
+	s.forwardRequest(ctx, originURL+ctx.Request.URL.Path, "origin")
 }

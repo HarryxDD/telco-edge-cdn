@@ -72,11 +72,8 @@ func (s *VideoStore) save() error {
 		return err
 	}
 
-	tmpPath := s.path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
-		return err
-	}
-	return os.Rename(tmpPath, s.path)
+	// permissions: 0644 = -rw-r--r-- (owner: rw, group: r, others: r)
+	return os.WriteFile(s.path, data, 0644)
 }
 
 func (s *VideoStore) GetAll() []VideoMeta {
