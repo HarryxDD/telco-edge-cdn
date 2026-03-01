@@ -1,1 +1,18 @@
-# Prometheus config
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: "cache-nodes"
+    static_configs:
+      - targets:
+          - "172.26.26.21:8080"
+          - "172.26.26.22:8080"
+          - "172.26.26.23:8080"
+    metrics_path: /metrics
+
+  - job_name: "ml-aggregator"
+    static_configs:
+      - targets:
+          - "172.26.26.11:8092"
+    metrics_path: /metrics

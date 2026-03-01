@@ -1,1 +1,9 @@
 # ML dependencies
+flask
+xgboost
+scikit-learn
+numpy
+pandas
+imbalanced-learn
+requests
+prometheus-client

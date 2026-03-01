@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 	"github.com/HarryxDD/telco-edge-cdn/cache-node/internal/coordination"
 	"github.com/HarryxDD/telco-edge-cdn/cache-node/internal/election"
 	"github.com/HarryxDD/telco-edge-cdn/cache-node/internal/gossip"
+	"github.com/HarryxDD/telco-edge-cdn/cache-node/internal/logging"
 	service "github.com/HarryxDD/telco-edge-cdn/cache-node/internal/service"
 	"github.com/joho/godotenv"
 )
@@ -39,6 +41,17 @@ func main() {
 	log.Printf("Starting cache node: ID=%d, Port=%d", nodeID, port)
 	log.Printf("Cluster nodes: %v", electionNodes)
 
+	logDir := getEnv("LOG_DIR", "/app/logs")
+	logPath := fmt.Sprintf("%s/access_%s.ndjson", logDir, nodeIDStr)
+	accessLogger, err := logging.NewAccessLogger(logPath, nodeIDStr)
+	if err != nil {
+		log.Printf("Warning: Failed to create access logger: %v", err)
+		accessLogger = nil
+	} else {
+		defer accessLogger.Close()
+		log.Printf("Access logger initialized: %s", logPath)
+	}
+
 	elec := election.NewBullyElection(nodeID, address, port, electionNodes)
 
 	gosp := gossip.NewEpidemicGossip(nodeIDStr, address, port, gossipPeers)
@@ -59,7 +72,7 @@ func main() {
 	}
 
 	// Initialize API server
-	srv := api.NewServerCoordinated(cache, coord)
+	srv := api.NewServerCoordinated(cache, coord, accessLogger)
 
 	log.Printf("[CACHE-SERVER] Cache node %s ready on port %d", nodeIDStr, port)
 
