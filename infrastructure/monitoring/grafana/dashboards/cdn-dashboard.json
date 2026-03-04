@@ -1,0 +1,276 @@
+{
+    "__inputs": [],
+    "__requires": [],
+    "annotations": { "list": [] },
+    "editable": true,
+    "fiscalYearStartMonth": 0,
+    "graphTooltip": 1,
+    "id": null,
+    "links": [],
+    "panels": [
+        {
+            "collapsed": false,
+            "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+            "id": 1,
+            "title": "Popular Content",
+            "type": "row"
+        },
+
+        {
+            "id": 2,
+            "title": "Top Requested Videos (Request Rate)",
+            "type": "timeseries",
+            "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
+            "datasource": "Prometheus",
+            "targets": [
+                {
+                    "expr": "topk(5, sum by (video_id) (rate(cdn_requests_total[2m])))",
+                    "legendFormat": "{{video_id}}"
+                }
+            ]
+        },
+
+        {
+            "id": 3,
+            "title": "Cache Hits vs Misses per Video",
+            "type": "timeseries",
+            "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
+            "datasource": "Prometheus",
+            "targets": [
+                {
+                    "expr": "sum by (video_id) (rate(cdn_cache_hits_total[2m]))",
+                    "legendFormat": "HIT · {{video_id}}"
+                },
+                {
+                    "expr": "sum by (video_id) (rate(cdn_cache_misses_total[2m]))",
+                    "legendFormat": "MISS · {{video_id}}"
+                }
+            ]
+        },
+
+        {
+            "id": 4,
+            "title": "Trending Videos (Request Rate Change)",
+            "type": "timeseries",
+            "gridPos": { "h": 8, "w": 24, "x": 0, "y": 9 },
+            "datasource": "Prometheus",
+            "targets": [
+                {
+                    "expr": "sum by (video_id) (rate(cdn_requests_total[1m]))",
+                    "legendFormat": "{{video_id}}"
+                }
+            ]
+        },
+
+        {
+            "collapsed": false,
+            "gridPos": { "h": 1, "w": 24, "x": 0, "y": 17 },
+            "id": 5,
+            "title": "QoS Metrics",
+            "type": "row"
+        },
+
+        {
+            "id": 6,
+            "title": "Average Response Time per Node (ms)",
+            "type": "timeseries",
+            "gridPos": { "h": 8, "w": 12, "x": 0, "y": 18 },
+            "datasource": "Prometheus",
+            "targets": [
+                {
+                    "expr": "sum by (node_id) (rate(cdn_request_duration_seconds_sum[1m])) / sum by (node_id) (rate(cdn_request_duration_seconds_count[1m])) * 1000",
+                    "legendFormat": "{{node_id}}"
+                }
+            ]
+        },
+
+        {
+            "id": 7,
+            "title": "Cache Hit Rate per Node",
+            "type": "timeseries",
+            "gridPos": { "h": 8, "w": 12, "x": 12, "y": 18 },
+            "datasource": "Prometheus",
+            "targets": [
+                {
+                    "expr": "sum by (node_id) (rate(cdn_cache_hits_total[1m])) / (sum by (node_id) (rate(cdn_cache_hits_total[1m])) + sum by (node_id) (rate(cdn_cache_misses_total[1m])))",
+                    "legendFormat": "{{node_id}}"
+                }
+            ]
+        },
+
+        {
+            "id": 8,
+            "title": "Rebuffer Events per Node",
+            "type": "timeseries",
+            "gridPos": { "h": 8, "w": 12, "x": 0, "y": 26 },
+            "datasource": "Prometheus",
+            "targets": [
+                {
+                    "expr": "sum by (node_id) (rate(cdn_rebuffer_events_total[1m]))",
+                    "legendFormat": "{{node_id}}"
+                }
+            ]
+        },
+
+        {
+            "id": 9,
+            "title": "Bytes Served per Node",
+            "type": "timeseries",
+            "gridPos": { "h": 8, "w": 12, "x": 12, "y": 26 },
+            "datasource": "Prometheus",
+            "targets": [
+                {
+                    "expr": "rate(cdn_bytes_served_total[1m])",
+                    "legendFormat": "{{node_id}}"
+                }
+            ]
+        },
+
+        {
+            "id": 10,
+            "title": "Error Rate per Node",
+            "type": "timeseries",
+            "gridPos": { "h": 8, "w": 24, "x": 0, "y": 34 },
+            "datasource": "Prometheus",
+            "targets": [
+                {
+                    "expr": "sum by (node_id) (rate(cdn_error_responses_total[1m]))",
+                    "legendFormat": "{{node_id}} - {{status_code}}"
+                }
+            ]
+        },
+
+        {
+            "collapsed": false,
+            "gridPos": { "h": 1, "w": 24, "x": 0, "y": 42 },
+            "id": 11,
+            "title": "User Sessions",
+            "type": "row"
+        },
+
+        {
+            "id": 12,
+            "title": "Active User Sessions",
+            "type": "stat",
+            "gridPos": { "h": 4, "w": 8, "x": 0, "y": 43 },
+            "datasource": "Prometheus",
+            "targets": [
+                {
+                    "expr": "max(cdn_active_sessions)",
+                    "legendFormat": "Total Active Sessions"
+                }
+            ]
+        },
+
+        {
+            "id": 13,
+            "title": "Bitrate Distribution",
+            "type": "timeseries",
+            "gridPos": { "h": 8, "w": 16, "x": 8, "y": 43 },
+            "datasource": "Prometheus",
+            "targets": [
+                {
+                    "expr": "sum by (node_id) (rate(cdn_bitrate_requested_kbps_sum[1m])) / sum by (node_id) (rate(cdn_bitrate_requested_kbps_count[1m]))",
+                    "legendFormat": "avg bitrate - {{node_id}}"
+                }
+            ]
+        },
+
+        {
+            "collapsed": false,
+            "gridPos": { "h": 1, "w": 24, "x": 0, "y": 51 },
+            "id": 14,
+            "title": "Federated Learning",
+            "type": "row"
+        },
+
+        {
+            "id": 15,
+            "title": "FL Rounds Completed",
+            "type": "stat",
+            "gridPos": { "h": 4, "w": 6, "x": 0, "y": 52 },
+            "datasource": "Prometheus",
+            "targets": [
+                {
+                    "expr": "fl_rounds_total",
+                    "legendFormat": "rounds"
+                }
+            ]
+        },
+
+        {
+            "id": 16,
+            "title": "FL Participating Nodes",
+            "type": "stat",
+            "gridPos": { "h": 4, "w": 6, "x": 6, "y": 52 },
+            "datasource": "Prometheus",
+            "targets": [
+                {
+                    "expr": "fl_participating_nodes",
+                    "legendFormat": "nodes"
+                }
+            ]
+        },
+
+        {
+            "id": 17,
+            "title": "Average Accuracy",
+            "type": "gauge",
+            "gridPos": { "h": 4, "w": 6, "x": 12, "y": 52 },
+            "datasource": "Prometheus",
+            "fieldConfig": {
+                "defaults": { "min": 0, "max": 1 }
+            },
+            "targets": [
+                {
+                    "expr": "fl_avg_accuracy",
+                    "legendFormat": "Accuracy"
+                }
+            ]
+        },
+
+        {
+            "id": 18,
+            "title": "Average AUC",
+            "type": "gauge",
+            "gridPos": { "h": 4, "w": 6, "x": 18, "y": 52 },
+            "datasource": "Prometheus",
+            "fieldConfig": {
+                "defaults": { "min": 0, "max": 1 }
+            },
+            "targets": [
+                {
+                    "expr": "fl_avg_auc",
+                    "legendFormat": "AUC"
+                }
+            ]
+        },
+
+        {
+            "id": 19,
+            "title": "FL Model Performance Over Time",
+            "type": "timeseries",
+            "gridPos": { "h": 8, "w": 24, "x": 0, "y": 56 },
+            "datasource": "Prometheus",
+            "targets": [
+                {
+                    "expr": "fl_avg_accuracy",
+                    "legendFormat": "Accuracy"
+                },
+                {
+                    "expr": "fl_avg_auc",
+                    "legendFormat": "AUC"
+                }
+            ]
+        }
+    ],
+    "refresh": "5s",
+    "schemaVersion": 38,
+    "tags": ["cdn", "telco", "fl", "edge", "distributed-systems"],
+    "time": { "from": "now-15m", "to": "now" },
+    "timepicker": {},
+    "timezone": "browser",
+    "title": "Telco Edge CDN",
+    "uid": "telco-edge-cdn",
+    "version": 1
+}

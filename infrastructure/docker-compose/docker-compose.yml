@@ -1,2 +1,287 @@
-version: '3.8'
 services:
+  origin:
+    build:
+      context: ../../services/origin
+    container_name: telco-origin
+    cap_add:
+      - NET_ADMIN
+    hostname: origin
+    environment:
+      - PORT=8443
+      - USE_TLS=false
+      - HLS_DIR=/app/hls
+      - VIDEOS_JSON=/app/videos.json
+    ports:
+      - "${ORIGIN_PORT:-8443}:8443"
+    env_file:
+      - ../../services/origin/.env
+    volumes:
+      - origin-uploads:/app/uploads
+      - origin-hls:/app/hls
+    networks:
+      - cdn-network
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost:8443/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command: ["./origin"]
+
+  cache-1:
+    build:
+      context: ../../services/cache-node
+      dockerfile: Dockerfile
+    container_name: telco-cache-1
+    hostname: cache-1
+    environment:
+      - NODE_ID=cache-1
+      - NODE_NUM=1
+      - PORT=8081
+      - ORIGIN_URL=http://origin:8443
+      - DB_PATH=/data/cache
+      - CACHE_CAPACITY=1000
+      - CLUSTER_NODES=cache-1:cache-1:8081,cache-2:cache-2:8082,cache-3:cache-3:8083
+      - PEER_NODES=cache-2:8082,cache-3:8083
+      - ML_AGGREGATOR_URL=http://ml-service:8092
+    ports:
+      - "8081:8081"
+      - "9081:9081"
+      - "10081:10081"
+    env_file:
+      - ../../services/cache-node/.env
+    volumes:
+      - cache-1-data:/app/data
+      - cache-1-logs:/app/logs
+    depends_on:
+      - origin
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost:8081/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - cdn-network
+
+  cache-2:
+    build:
+      context: ../../services/cache-node
+      dockerfile: Dockerfile
+    container_name: telco-cache-2
+    hostname: cache-2
+    environment:
+      - NODE_ID=cache-2
+      - NODE_NUM=2
+      - PORT=8082
+      - ORIGIN_URL=http://origin:8443
+      - DB_PATH=/data/cache
+      - CACHE_CAPACITY=1000
+      - CLUSTER_NODES=cache-1:cache-1:8081,cache-2:cache-2:8082,cache-3:cache-3:8083
+      - PEER_NODES=cache-1:8081,cache-3:8083
+      - ML_AGGREGATOR_URL=http://ml-service:8092
+    ports:
+      - "8082:8082"
+      - "9082:9082"
+      - "10082:10082"
+    env_file:
+      - ../../services/cache-node/.env
+    volumes:
+      - cache-2-data:/app/data
+      - cache-2-logs:/app/logs
+    depends_on:
+      - origin
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost:8082/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - cdn-network
+
+  cache-3:
+    build:
+      context: ../../services/cache-node
+      dockerfile: Dockerfile
+    container_name: telco-cache-3
+    hostname: cache-3
+    environment:
+      - NODE_ID=cache-3
+      - NODE_NUM=3
+      - PORT=8083
+      - ORIGIN_URL=http://origin:8443
+      - DB_PATH=/data/cache
+      - CACHE_CAPACITY=1000
+      - CLUSTER_NODES=cache-1:cache-1:8081,cache-2:cache-2:8082,cache-3:cache-3:8083
+      - PEER_NODES=cache-1:8081,cache-2:8082
+      - ML_AGGREGATOR_URL=http://ml-service:8092
+    ports:
+      - "8083:8083"
+      - "9083:9083"
+      - "10083:10083"
+    env_file:
+      - ../../services/cache-node/.env
+    volumes:
+      - cache-3-data:/app/data
+      - cache-3-logs:/app/logs
+    depends_on:
+      - origin
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost:8083/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - cdn-network
+
+  load-balancer:
+    build:
+      context: ../../services/load-balancer
+      dockerfile: Dockerfile
+    container_name: telco-lb
+    environment:
+      - PORT=8090
+      - CACHE_NODES=cache-1:cache-1:8081,cache-2:cache-2:8082,cache-3:cache-3:8083
+    ports:
+      - "${LOAD_BALANCER_PORT:-8090}:8090"
+    env_file:
+      - ../../services/load-balancer/.env
+    depends_on:
+      - cache-1
+      - cache-2
+      - cache-3
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost:8090/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - cdn-network
+
+  ml-service:
+    build:
+      context: ../../ml/aggregator
+      dockerfile: Dockerfile
+    container_name: telco-ml
+    hostname: ml-service
+    environment:
+      - MODELS_DIR=/app/models
+    ports:
+      - "8092:8092"
+    volumes:
+      - ml-models:/app/models
+      - cache-1-logs:/app/logs/cache-1:ro
+      - cache-2-logs:/app/logs/cache-2:ro
+      - cache-3-logs:/app/logs/cache-3:ro
+    networks:
+      - cdn-network
+    depends_on:
+      - cache-1
+      - cache-2
+      - cache-3
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost:8092/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  fl-client-1:
+    build:
+      context: ../../ml
+      dockerfile: fl.Dockerfile
+    container_name: telco-fl-1
+    environment:
+      - NODE_ID=cache-1
+      - LOG_PATH=/app/logs/access_cache-1.ndjson
+      - AGGREGATOR_URL=http://ml-service:8092
+      - TRAIN_INTERVAL=120
+      - MODELS_DIR=/app/models
+    volumes:
+      - cache-1-logs:/app/logs:ro
+      - ml-models:/app/models
+    networks:
+      - cdn-network
+    depends_on:
+      - ml-service
+
+  fl-client-2:
+    build:
+      context: ../../ml
+      dockerfile: fl.Dockerfile
+    container_name: telco-fl-2
+    environment:
+      - NODE_ID=cache-2
+      - LOG_PATH=/app/logs/access_cache-2.ndjson
+      - AGGREGATOR_URL=http://ml-service:8092
+      - TRAIN_INTERVAL=120
+      - MODELS_DIR=/app/models
+    volumes:
+      - cache-2-logs:/app/logs:ro
+      - ml-models:/app/models
+    networks:
+      - cdn-network
+    depends_on:
+      - ml-service
+
+  fl-client-3:
+    build:
+      context: ../../ml
+      dockerfile: fl.Dockerfile
+    container_name: telco-fl-3
+    environment:
+      - NODE_ID=cache-3
+      - LOG_PATH=/app/logs/access_cache-3.ndjson
+      - AGGREGATOR_URL=http://ml-service:8092
+      - TRAIN_INTERVAL=120
+      - MODELS_DIR=/app/models
+    volumes:
+      - cache-3-logs:/app/logs:ro
+      - ml-models:/app/models
+    networks:
+      - cdn-network
+    depends_on:
+      - ml-service
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: telco-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ../../infrastructure/monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    networks:
+      - cdn-network
+    depends_on:
+      - cache-1
+      - cache-2
+      - cache-3
+      - ml-service
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: telco-grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - ../../infrastructure/monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+      - ../../infrastructure/monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    networks:
+      - cdn-network
+    depends_on:
+      - prometheus
+
+networks:
+  cdn-network:
+    driver: bridge
+
+volumes:
+  origin-uploads:
+  origin-hls:
+  cache-1-data:
+  cache-2-data:
+  cache-3-data:
+  cache-1-logs:
+  cache-2-logs:
+  cache-3-logs:
+  ml-models:

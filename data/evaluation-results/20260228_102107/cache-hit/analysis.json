@@ -1,0 +1,48 @@
+{
+  "total_requests": 1000,
+  "cache_hits": 988,
+  "cache_misses": 12,
+  "hit_ratio_percent": 98.8,
+  "segment_stats": {
+    "segment_0002.m4s": {
+      "count": 216,
+      "percent": 21.6
+    },
+    "segment_0001.m4s": {
+      "count": 409,
+      "percent": 40.9
+    },
+    "segment_0003.m4s": {
+      "count": 158,
+      "percent": 15.8
+    },
+    "segment_0004.m4s": {
+      "count": 114,
+      "percent": 11.4
+    },
+    "segment_0005.m4s": {
+      "count": 20,
+      "percent": 2.0
+    },
+    "segment_0010.m4s": {
+      "count": 23,
+      "percent": 2.3
+    },
+    "segment_0008.m4s": {
+      "count": 16,
+      "percent": 1.6
+    },
+    "segment_0009.m4s": {
+      "count": 19,
+      "percent": 1.9
+    },
+    "segment_0006.m4s": {
+      "count": 15,
+      "percent": 1.5
+    },
+    "segment_0007.m4s": {
+      "count": 10,
+      "percent": 1.0
+    }
+  }
+}

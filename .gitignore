@@ -1,4 +1,10 @@
+services/origin/cmd/server.*
+node_modules/
+hls/
+uploads/
+
 PLANNING_NOTES.md
+DEMO_NOTES.md
 
 # Binaries
 *.exe
@@ -13,7 +19,6 @@ PLANNING_NOTES.md
 # Go
 go.work
 go.work.sum
-*.sum
 vendor/
 
 # Python
@@ -81,3 +86,36 @@ benchmarks/reports/*.pdf
 *.key
 !*example.env
 
+data/evaluation-results/**/k6-results.json
+# Data directories
+data/videos.json
+data/logs/
+data/models/
+data/origin-uploads/
+data/origin-hls/
+data/oulu-logs/
+data/cache-1/
+data/cache-2/
+data/cache-3/
+
+# Containerlab generated files
+*.clab.yml
+.topology-*.yml
+clab-*/
+
+# Client node modules
+services/client/frontend/node_modules/
+services/client/frontend/dist/
+
+# Build artifacts
+*.pyc
+__pycache__/
+.pytest_cache/
+
+# Go build
+*.exe
+services/*/tmp/
+
+# Logs
+*.log
+*.ndjson
