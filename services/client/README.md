@@ -6,8 +6,8 @@ The Client is a React-based web application for browsing and streaming videos fr
 
 - **Video Library**: Browse available videos
 - **HLS Playback**: Adaptive bitrate streaming with HLS.js
-- **Responsive Design**: Works on desktop and mobile
-- **Real-time Updates**: Fetches latest video catalog
+- **Video Uploading**: Direct upload to Origin via Load Balancer
+- **MEC Oulu Dashboard**: Real-time connected node statuses and metrics
 - **Quality Selection**: Automatic quality adaptation based on bandwidth
 
 ## Architecture
@@ -18,18 +18,19 @@ The Client is a React-based web application for browsing and streaming videos fr
 │                                  │
 │  ┌────────────────────────────┐  │
 │  │  App.tsx                   │  │
-│  │  - Main component          │  │
+│  │  - Dashboard UI            │  │
 │  │  - Video list state        │  │
 │  └────┬────────────────┬──────┘  │
 │       │                │         │
 │  ┌────┴──────┐    ┌────┴──────┐  │
 │  │VideoList  │    │VideoPlayer│  │
 │  │.tsx       │    │.tsx       │  │
-│  └───────────┘    └───────────┘  │
-│                        │         │
-│                    ┌───┴──────┐  │
-│                    │ HLS.js   │  │
-│                    └──────────┘  │
+│  └────┬──────┘    └───────────┘  │
+│       │                │         │
+│  ┌────┴──────┐     ┌───┴──────┐  │
+│  │VideoUpload│     │ HLS.js   │  │
+│  │.tsx       │     └──────────┘  │
+│  └───────────┘                   │
 └──────────────────────────────────┘
        │                  │
        ↓                  ↓
@@ -100,6 +101,10 @@ export default defineConfig({
         target: 'http://localhost:8090',  // Load balancer
         changeOrigin: true,
       },
+      '/metrics': {
+        target: 'http://localhost:8090',
+        changeOrigin: true,
+      }
     },
   },
 });
@@ -147,6 +152,12 @@ interface VideoPlayerProps {
 }
 ```
 
+### VideoUpload.tsx
+
+Video upload interface:
+- Multi-part form data upload of source videos to `/api/upload`.
+- Feedback states while the video is transcoding on the origin.
+
 ## Video Playback Flow
 
 1. User selects video from list
@@ -166,12 +177,13 @@ services/client/frontend/
 │   ├── manifest.json
 │   └── robots.txt
 ├── src/
-│   ├── App.tsx              # Main component
+│   ├── App.tsx              # Main Dashboard component
 │   ├── App.css              # App styles
-│   ├── VideoList.tsx        # Video list component
-│   ├── VideoPlayer.tsx      # HLS player component
+│   ├── VideoList.tsx        # Video list sidebar component
+│   ├── VideoPlayer.tsx      # HLS player center component
+│   ├── VideoUpload.tsx      # Video upload sidebar component
 │   ├── index.tsx            # Entry point
-│   ├── index.css            # Global styles
+│   ├── index.css            # Global theme variables (`#0d1117`, `#00ffaa`)
 │   └── react-app-env.d.ts   # Type definitions
 ├── package.json
 ├── tsconfig.json

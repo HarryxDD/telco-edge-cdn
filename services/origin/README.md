@@ -8,6 +8,7 @@ The Origin Server is the central content repository for the CDN. It handles vide
 - **HLS Transcoding**: Automatic conversion to HLS format with multiple quality levels
 - **Content Storage**: Persistent storage for uploaded videos and transcoded segments
 - **Video Metadata**: JSON-based catalog of available videos
+- **Metrics Export**: Prometheus metrics endpoint for monitoring
 - **Health Monitoring**: Built-in health check endpoint
 
 ## Architecture
@@ -25,6 +26,7 @@ The Origin Server is the central content repository for the CDN. It handles vide
 │  │  API Handler         │  │
 │  │  - Upload            │  │
 │  │  - List Videos       │  │
+│  │  - Metrics & Health  │  │
 │  └──────────┬───────────┘  │
 │             │              │
 │  ┌──────────┴───────────┐  │
@@ -59,6 +61,8 @@ VIDEOS_PATH=videos.json
 TLS_CERT_FILE=server.crt
 TLS_KEY_FILE=server.key
 ```
+
+*Note: In the Containerlab deployment (MEC Oulu), the Origin Server defaults to `ADDR=:8080` and `USE_TLS=false` to simplify internal routing.*
 
 ## Running Locally
 
@@ -111,6 +115,13 @@ Returns server health status.
   "version": "1.0.0"
 }
 ```
+
+### Prometheus Metrics
+```http
+GET /metrics
+```
+
+Returns Prometheus formatted metrics for the Origin server (WIP).
 
 ### List Videos
 ```http
@@ -177,6 +188,12 @@ GET /hls/{videoId}/playlist_{quality}.m3u8
 GET /hls/{videoId}/segment_{quality}_{n}.m4s
 ```
 
+*Cache Node Alias:*
+```http
+GET /videos/{videoId}/*filepath
+```
+*(Maps directly to `/hls/{videoId}/*filepath` to accommodate cache node requesting patterns)*
+
 Serve HLS manifests and segments.
 
 **Example:**
@@ -236,6 +253,5 @@ docker run -p 8443:8443 -v $(pwd)/uploads:/app/uploads -v $(pwd)/hls:/app/hls or
 
 ## References
 
-- [HLS Specification](https://datatracker.ietf.org/doc/html/rfc8216)
 - [FFmpeg Documentation](https://ffmpeg.org/documentation.html)
 - [Gin Web Framework](https://gin-gonic.com/docs/)

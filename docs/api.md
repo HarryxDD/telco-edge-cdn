@@ -285,6 +285,30 @@ Content-Length: 524288
 
 ---
 
+---
+
+### Metrics
+
+**Endpoint:** `GET /metrics`
+
+**Description:** Retrieve Prometheus metrics for the origin server.
+
+**Response:**
+```http
+HTTP/1.1 200 OK
+Content-Type: text/plain
+```
+
+---
+
+### Stream Video Alias
+
+**Endpoint:** `GET /videos/{videoId}/*filepath`
+
+**Description:** Alternate path for streaming HLS content, internally mapped to the HLS handler.
+
+---
+
 ## Cache Node API
 
 ### Health Check
@@ -377,6 +401,85 @@ Same response format as origin server's `/api/videos`.
 
 ---
 
+---
+
+### Metrics
+
+**Endpoint:** `GET /metrics`
+
+**Description:** Retrieve Prometheus metrics for the cache node (cache hits, misses, active sessions, etc.).
+
+---
+
+### Coordination Status
+
+**Endpoint:** `GET /coordination/status`
+
+**Description:** Retrieve the current leader election and cluster coordination status.
+
+**Response:**
+```json
+{
+  "node": "cache-1",
+  "is_leader": true,
+  "state": "leader"
+}
+```
+
+---
+
+### Request Coordination Lock
+
+**Endpoint:** `POST /coordination/request-lock`
+
+**Description:** Request a fetching lock for a specific video segment from the cluster leader.
+
+**Request Body:**
+```json
+{
+  "segment_id": "/videos/nature-documentary/segment_720p_5.m4s",
+  "node_id": "cache-2"
+}
+```
+
+**Response (Success):**
+```json
+{
+  "granted": true,
+  "fetching_node": "cache-2"
+}
+```
+
+**Status Codes:**
+- `200`: Success
+- `400`: Bad request
+- `503`: Service unavailable (node is not the leader)
+
+---
+
+### Release Coordination Lock
+
+**Endpoint:** `POST /coordination/release-lock`
+
+**Description:** Release a previously acquired fetching lock.
+
+**Request Body:**
+```json
+{
+  "segment_id": "/videos/nature-documentary/segment_720p_5.m4s",
+  "node_id": "cache-2"
+}
+```
+
+**Response:**
+```json
+{
+  "status": "released"
+}
+```
+
+---
+
 ## Load Balancer API
 
 ### Health Check
@@ -398,6 +501,24 @@ Content-Type: application/json
 
 {
   "status": "healthy"
+}
+```
+
+---
+
+---
+
+### Debug Hash Ring
+
+**Endpoint:** `GET /debug/ring`
+
+**Description:** Dump the current state of the bounded-load consistent hash ring.
+
+**Response:**
+```json
+{
+  "nodes": [...],
+  "loads": {...}
 }
 ```
 
@@ -455,6 +576,112 @@ Content-Type: application/json
 
 [...]
 ```
+
+---
+
+---
+
+## ML Aggregator API
+
+**Base URL:** `http://localhost:8092`
+
+### Health Check
+
+**Endpoint:** `GET /health`
+
+**Description:** Check the health and configuration of the ML aggregator.
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "service": "ml-aggregator",
+  "fl_round": 5,
+  "uptime": "2023-11-01T12:00:00.000000",
+  "model_ready": true
+}
+```
+
+---
+
+### Get Global Model
+
+**Endpoint:** `GET /model`
+
+**Description:** Download the current aggregated global XGBoost model.
+
+**Response:**
+```http
+HTTP/1.1 200 OK
+Content-Type: application/octet-stream
+```
+*(Returns binary pickle file)*
+
+**Status Codes:**
+- `200`: Success
+- `404`: No global model available yet
+
+---
+
+### Submit Model Update
+
+**Endpoint:** `POST /update`
+
+**Description:** Receive locally trained model updates from edge FL clients.
+
+**Content-Type:** `multipart/form-data`
+
+**Form Fields:**
+- `node_id` (string): Identifier of the edge node (e.g., "cache-1")
+- `metrics` (stringified JSON): Evaluation metrics (e.g., `{"f1": 0.85, "auc": 0.90, "n_samples": 1000}`)
+- `model` (file): Pickled XGBoost model file
+
+**Response:**
+```json
+{
+  "status": "received",
+  "node_id": "cache-1",
+  "fl_round": 5,
+  "nodes_this_round": 1,
+  "message": "Aggregation triggers at 2+ nodes."
+}
+```
+
+---
+
+### Federated Learning Status
+
+**Endpoint:** `GET /status`
+
+**Description:** Retrieve the detailed state of the federated learning process, including history.
+
+**Response:**
+```json
+{
+  "fl_round": 5,
+  "participating_nodes": ["cache-1", "cache-2"],
+  "pending_updates": [],
+  "round_history": [{}],
+  "model_ready": true,
+  "started_at": "..."
+}
+```
+
+---
+
+### ML Metrics (Prometheus)
+
+**Endpoint:** `GET /metrics`
+
+**Description:** Retrieve ML infrastructure metrics in Prometheus format.
+
+---
+
+### ML Metrics (JSON)
+
+**Endpoint:** `GET /metrics/json`
+
+**Description:** Retrieve a summary of ML training metrics in JSON format.
 
 ---
 
@@ -585,7 +812,5 @@ function VideoList() {
 
 ## References
 
-- [HTTP/1.1 RFC 9110](https://www.rfc-editor.org/rfc/rfc9110.html)
 - [HLS RFC 8216](https://datatracker.ietf.org/doc/html/rfc8216)
-- [REST API Design Best Practices](https://restfulapi.net/)
 - [Gin Web Framework Documentation](https://gin-gonic.com/docs/)

@@ -21,19 +21,25 @@ The Load Balancer is a smart request router that distributes incoming CDN reques
 ┌────────────────────────────────────┐
 │        Load Balancer               │
 │                                    │
-│  ┌──────────────────────────────┐  │
-│  │  Bounded-Load Hash Ring      │  │
-│  │  - Consistent hashing        │  │
-│  │  - Load tracking             │  │
-│  │  - Health awareness          │  │
-│  └──────────┬───────────────────┘  │
-│             │                      │
-│  ┌──────────┴───────────────────┐  │
-│  │  Health Checker              │  │
-│  │  - Periodic checks           │  │
-│  │  - Node status tracking      │  │
-│  └──────────────────────────────┘  │
-└─────────────────────────────────────┘
+│  │  API Server          │  │
+│  │  - /health           │  │
+│  │  - /debug/ring       │  │
+│  │  - /api/* (Proxy)    │  │
+│  │  - /hls/* (Route)    │  │
+│  └──────────┬───────────┘  │
+│             │              │
+│  ┌──────────┴───────────┐  │
+│  │  Bounded-Load Ring   │  │
+│  │  - Consistent hashing│  │
+│  │  - Rate Calculation  │  │
+│  └──────────┬───────────┘  │
+│             │              │
+│  ┌──────────┴───────────┐  │
+│  │  Health Checker      │  │
+│  │  - Periodic polls    │  │
+│  │  - Node state manage │  │
+│  └──────────────────────┘  │
+└────────────────────────────┘
        │
        ├─────────┬─────────┬─────────┐
        ↓         ↓         ↓         ↓
@@ -92,21 +98,19 @@ Returns load balancer health.
 }
 ```
 
+### Debug Hash Ring
+```http
+GET /debug/ring
+```
+
+Dumps current health and load status of all tracked virtual nodes.
+
 ### Video Streaming (HLS)
 ```http
-GET /hls/{videoId}/master.m3u8
-GET /hls/{videoId}/playlist_{quality}.m3u8
-GET /hls/{videoId}/segment_{quality}_{n}.m4s
+GET /hls/{videoId}/*path
 ```
 
-Routes HLS requests to appropriate cache node.
-
-### Video Streaming (Legacy)
-```http
-GET /videos/{videoId}/*
-```
-
-Alternative path for video content.
+Routes HLS requests to appropriate cache node cleanly.
 
 ### API Proxy
 ```http
@@ -120,16 +124,16 @@ Proxies API requests to cache nodes (which forward to origin).
 
 ### Bounded-Load Consistent Hashing
 
-1. **Hash Calculation**: Generates hash from request path (e.g., `/hls/video-123/master.m3u8`)
-2. **Node Selection**: Maps hash to a cache node
-3. **Load Check**: Verifies node load is below `maxLoadFactor × averageLoad`
+1. **Hash Calculation**: Generates `fnv.New32a()` hash from request path (`/hls/video-123/master.m3u8`)
+2. **Node Selection**: Maps hash to a cache node via binary search of virtual ring
+3. **Load Check**: Calculates moving average request rate in 10-second windows and verifies node load is below `maxLoadFactor × averageRate`
 4. **Health Check**: Ensures selected node is healthy
-5. **Fallback**: If primary node is overloaded, tries next node in ring
+5. **Fallback**: If primary node is overloaded, tries next node in ring until an acceptable rate is met (or selects the absolute least loaded node globally)
 
 ### Parameters
 
-- **Virtual Nodes**: 150 (increases distribution uniformity)
-- **Max Load Factor**: 1.25 (allows 25% above average load)
+- **Virtual Nodes**: Default 150 (increases distribution uniformity)
+- **Max Load Factor**: Default 1.25 (allows 25% above average load per 10-second window)
 
 ### Benefits
 
@@ -142,10 +146,10 @@ Proxies API requests to cache nodes (which forward to origin).
 
 ### Health Check Mechanism
 
-- **Interval**: Every 30 seconds
-- **Endpoint**: `GET /health` on each cache node
+- **Interval**: Every 5 seconds
+- **Endpoint**: `GET /health` on each registered cache node
 - **Timeout**: 5 seconds
-- **Action**: Marks node as unhealthy on failure
+- **Action**: Marks node `Healthy: false` on connection refused or non-200 responses
 
 ### Node States
 

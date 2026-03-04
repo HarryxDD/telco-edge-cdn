@@ -6,7 +6,7 @@ The Telco-Edge CDN is a distributed video streaming system designed for ultra-lo
 
 ## High-Level Architecture
 
-```
+```text
 ┌─────────────────────────────────────────────────┐
 │                   Client                        │
 │              (React + HLS.js)                   │
@@ -20,17 +20,17 @@ The Telco-Edge CDN is a distributed video streaming system designed for ultra-lo
            │                      │
     ┌──────┴──────┐       ┌──────┴──────┐
     ↓             ↓       ↓             ↓
-┌─────────┐  ┌─────────┐  ┌─────────┐
-│ Cache-1 │  │ Cache-2 │  │ Cache-3 │  ... Edge Nodes
+┌─────────┐  ┌─────────┐  ┌─────────┐   Edge Cache Cluster
+│ Cache-1 │──│ Cache-2 │──│ Cache-3 │   (Gossip/Election)
 └────┬────┘  └────┬────┘  └────┬────┘
+  (FL-1)       (FL-2)       (FL-3)      <-- FL Clients
      │            │            │
-     └────────────┴────────────┘
-                  │ (on cache miss)
-                  ↓
-         ┌─────────────────┐
-         │  Origin Server  │
-         │  (HLS Encoding) │
-         └─────────────────┘
+     ├────────────┼────────────┼─────────> (Cache Misses)
+     │            │            │                ↓
+     ↓            ↓            ↓          ┌─────────────────┐
+┌──────────────────────────────────┐      │  Origin Server  │
+│      ML Aggregator (Cloud)       │      │  (HLS Encoding) │
+└──────────────────────────────────┘      └─────────────────┘
 ```
 
 ## Components
@@ -95,6 +95,8 @@ origin/
 - Automatic cache warming
 - Configurable capacity limits
 - Origin failover on errors
+- Gossip protocol for peer discovery and state sharing
+- Leader election for cache coordination
 
 **Cache Architecture:**
 ```
@@ -178,6 +180,31 @@ Cache Node
 - Automatic quality adaptation
 - Real-time video catalog updates
 - Browser-native video controls
+
+### 5. Federated Learning System
+
+**Purpose:** Decentralized machine learning to optimize caching strategies securely.
+
+**Components:**
+- **FL Clients (Edge):** Python-based clients co-located with cache nodes. They parse local access logs and train local models periodically.
+- **ML Aggregator (Cloud):** Central service that orchestrates Federated Learning rounds, receives model updates from FL clients, aggregates them, and distributes the global model back to the edge.
+
+**Key Features:**
+- Privacy-preserving (raw access logs remain at the edge)
+- Distributed model training and synchronization
+- REST APIs for FL status and metrics
+
+### 6. Observability Stack
+
+**Purpose:** Centralized monitoring of system health and metrics.
+
+**Technology:**
+- Prometheus (Time-series metrics)
+- Grafana (Dashboards)
+
+**Responsibilities:**
+- Scrape health endpoints and metrics from cache nodes, ML aggregator, and load balancer.
+- Visualize latency, load distribution, cache hit ratios, and FL training rounds.
 
 ## Data Flow
 
@@ -308,6 +335,4 @@ New item stored
 ## References
 
 - [HTTP Live Streaming RFC 8216](https://datatracker.ietf.org/doc/html/rfc8216)
-- [Consistent Hashing and Random Trees (Karger et al.)](https://www.akamai.com/us/en/multimedia/documents/technical-publication/consistent-hashing-and-random-trees-distributed-caching-protocols-for-relieving-hot-spots-on-the-world-wide-web-technical-publication.pdf)
 - [Consistent Hashing with Bounded Loads (Mirrokni et al., Google)](https://ai.googleblog.com/2017/04/consistent-hashing-with-bounded-loads.html)
-- [Edge Computing for CDN (Akamai)](https://www.akamai.com/our-thinking/cdn/what-is-edge-computing)

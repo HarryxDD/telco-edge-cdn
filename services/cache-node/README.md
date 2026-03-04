@@ -4,12 +4,13 @@ The Cache Node is a distributed edge caching service that sits between the load 
 
 ## Features
 
-- **LRU Caching**: Implements Least Recently Used eviction policy
+- **W-TinyLFU Caching**: Advanced cache eviction policy (Window TinyLFU) for high hit rates
+- **Gossip Protocol**: Epidemic state synchronization across the cache cluster
+- **Leader Election**: Automated Bully Algorithm to select a coordinator
 - **Disk-backed Storage**: Uses BadgerDB for persistent caching
 - **Origin Failover**: Automatically fetches from origin on cache miss
-- **Health Monitoring**: Exposes health endpoint for load balancer
+- **Metrics Export**: Exposes Prometheus metrics for observability
 - **Content Validation**: SHA-256 based cache key generation
-- **TLS Support**: Can communicate with origin over HTTPS
 
 ## Architecture
 
@@ -25,13 +26,20 @@ The Cache Node is a distributed edge caching service that sits between the load 
 │  ┌──────────────────────┐  │
 │  │  API Server          │  │
 │  │  - /health           │  │
-│  │  - /videos/*         │  │
+│  │  - /metrics          │  │
+│  │  - /coordination/*   │  │
 │  │  - /hls/*            │  │
 │  └──────────┬───────────┘  │
 │             │              │
 │  ┌──────────┴───────────┐  │
+│  │  Coordinator Layer   │  │
+│  │  - Leader Election   │  │
+│  │  - Gossip Protocol   │  │
+│  └──────────┬───────────┘  │
+│             │              │
+│  ┌──────────┴───────────┐  │
 │  │  EdgeCache Service   │  │
-│  │  - LRU eviction      │  │
+│  │  - W-TinyLFU evict   │  │
 │  │  - Origin fetcher    │  │
 │  └──────────┬───────────┘  │
 │             │              │
@@ -57,6 +65,10 @@ NODE_ID=cache-1
 
 # Server configuration
 PORT=8081
+ADDRESS=localhost
+
+# Cluster configuration
+CLUSTER_NODES=cache-1:localhost:8081,cache-2:localhost:8082,cache-3:localhost:8083
 
 # Origin server
 ORIGIN_URL=http://localhost:8443
@@ -64,8 +76,11 @@ ORIGIN_URL=http://localhost:8443
 # Storage
 DB_PATH=./data/cache-cache-1
 
-# Cache capacity in bytes (default: 500MB)
-CACHE_CAPACITY=524288000
+# Cache capacity in number of items
+CACHE_CAPACITY=1000
+
+# Logging
+LOG_DIR=/app/logs
 ```
 
 ## Running Locally
@@ -102,9 +117,26 @@ Returns node health and ID.
 ```json
 {
   "status": "healthy",
-  "node": "cache-1"
+  "node": "cache-1",
+  "is_leader": true
 }
 ```
+
+### Prometheus Metrics
+```http
+GET /metrics
+```
+
+Returns Prometheus-formatted metrics (hit/miss counters, active sessions, rebuffering events, bytes served, etc).
+
+### Coordination Endpoints
+```http
+GET  /coordination/status
+POST /coordination/request-lock
+POST /coordination/release-lock
+```
+
+Internal cluster communication for leader lock management and state introspection.
 
 ### Serve HLS Content
 ```http
@@ -116,14 +148,7 @@ HEAD /hls/{videoId}/*
 
 Serves HLS content from cache or fetches from origin.
 
-### Serve Video (Legacy Path)
-```http
-GET /videos/{videoId}/master.m3u8
-GET /videos/{videoId}/*
-HEAD /videos/{videoId}/*
-```
-
-Alternative path for video content.
+Serves HLS content from cache or fetches from origin. Records access analytics locally.
 
 ### Proxy Video List
 ```http
@@ -140,19 +165,21 @@ Proxies the video list request to the origin server.
 3. Checks BadgerDB for cached data
 4. Returns cached data with appropriate Content-Type header
 
-### Cache Miss
+### Cache Miss & Stampede Protection
 1. Cache node detects miss
-2. Fetches content from origin server
-3. Stores content in BadgerDB
-4. Returns content to client
-5. Applies LRU eviction if cache is full
+2. Uses standard cluster coordination to ask Leader for fetch lock
+3. Fetches content from origin server (or peer if someone else downloaded it via gossip)
+4. Stores content in BadgerDB
+5. Returns content to client
+6. May trigger W-TinyLFU eviction if maximum segments are reached
 
-### Eviction Policy
+### Eviction Policy (W-TinyLFU)
 
-When cache reaches capacity:
-- Least Recently Used (LRU) items are evicted first
-- Eviction continues until space is available
-- Cache capacity is configurable via `CACHE_CAPACITY`
+When cache reaches segment capacity (`CACHE_CAPACITY`):
+- Uses access frequencies via Count-Min Sketch.
+- Small Window Cache accepts bursty newly-admitted segments.
+- Main Cache operates SLRU (Segmented LRU) evaluating Frequency (LFU) against Recency (LRU).
+- Safely evicts stale segments to free up constraints.
 
 ## Directory Structure
 
@@ -164,10 +191,15 @@ services/cache-node/
 ├── internal/
 │   ├── api/
 │   │   └── server.go         # HTTP server and handlers
+│   ├── coordination/         # Orchestrates cluster features
+│   ├── election/             # Bully Election algorithm
+│   ├── gossip/               # Epidemic state syncing
+│   ├── metrics/              # Prometheus Prometheus integration
+│   ├── logging/              # Local access NDJSON logging
 │   ├── service/
 │   │   └── cache.go          # EdgeCache implementation
-│   └── lru/
-│       └── lru.go            # LRU eviction logic
+│   └── wtinylfu/
+│       └── wtinylfu.go       # Frequency/Recency eviction algorithm
 ├── data/                     # Cache storage (created at runtime)
 ├── Dockerfile
 ├── go.mod
@@ -227,11 +259,9 @@ The load balancer distributes requests across all healthy nodes.
 
 - **Origin Server**: Provides source video content
 - **Load Balancer**: Distributes requests to cache nodes
-- **Client**: Web frontend for video playback
+- **Federated Learning Orchestrator / Metric Syncing**: The NDJSON logs produced heavily feed into edge-machine-learning workflows locally.
 
 ## References
 
-- [LRU Cache Implementation in Go (Medium)](https://medium.com/@dinesht.bits/implementing-lru-cache-using-golang-7dcea5c3f054)
-- [LRU Cache in Go (dev.to)](https://dev.to/johnscode/implement-an-lru-cache-in-go-1hbc)
 - [BadgerDB Documentation](https://dgraph.io/docs/badger/)
-- [HLS Caching Best Practices](https://www.cloudflare.com/learning/video/what-is-http-live-streaming/)
+- [TinyLFU: A Highly Efficient Cache Admission Policy](https://arxiv.org/abs/1512.00727)
