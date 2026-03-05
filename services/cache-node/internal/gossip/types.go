@@ -12,6 +12,7 @@ const (
 	MsgCacheInvalidate                          // Cache invalidation
 	MsgPreFetch                                 // AI pre-fetch command
 	MsgPing                                     // Heartbeat
+	MsgInventoryResponse                        // Full inventory response
 )
 
 // GossipMessage represents a gossip protocol message

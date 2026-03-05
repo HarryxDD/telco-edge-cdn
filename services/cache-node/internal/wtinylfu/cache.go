@@ -20,12 +20,20 @@ func hashString(s string) uint64 {
 
 // capacity: number of items (not bytes)
 // samples: number of samples before resetting (typically capacity * 10)
-func NewWTinyLFUCache(capacity int) *WTinyLFUCache {
+func NewWTinyLFUCache(capacity int, onEvict func(key string)) *WTinyLFUCache {
+	cacheOptions := []tinylfu.Option[string, struct{}]{}
+	if onEvict != nil {
+		cacheOptions = append(cacheOptions, tinylfu.OnEvict(func(key string, _ struct{}) {
+			onEvict(key)
+		}))
+	}
+
 	return &WTinyLFUCache{
 		cache: tinylfu.New[string, struct{}](
 			capacity,    // max number of items to track
 			capacity*10, // samples: reset frequency counters after this many operations
 			hashString,  // hash function for string keys
+			cacheOptions...,
 		),
 	}
 }
