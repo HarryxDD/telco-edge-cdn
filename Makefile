@@ -333,15 +333,6 @@ clean-all: clab-down clean-docker ## Nuclear cleanup
 
 .DEFAULT_GOAL := help
 
-# ML Stuff
-build-ml: ## Build ML service
-	docker build -t telco-cdn-ml:latest -f services/ml-service/Dockerfile services/ml-service
-
-build-fl-client: ## Build FL client
-	docker build -t edge-fl-client:latest -f services/edge-fl-client/Dockerfile services/edge-fl-client
-
-build-all-ml: build build-ml build-fl-client ## Build all images
-
 # FL monitoring
 fl-status: ## Show FL status
 	@echo "$(BLUE)FL Status:$(NC)"

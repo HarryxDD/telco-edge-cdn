@@ -28,9 +28,20 @@ func NewEdgeCache(dbPath, originURL, nodeID string, cacheCapacity int) (*EdgeCac
 		return nil, err
 	}
 
+	onEvict := func(key string) {
+		err := db.Update(func(txn *badger.Txn) error {
+			return txn.Delete([]byte(key))
+		})
+		if err != nil {
+			log.Printf("[%s] ERROR evicted item deletion failed: %v", nodeID, err)
+		} else {
+			log.Printf("[%s] EVICTED: %s", nodeID, key)
+		}
+	}
+
 	return &EdgeCache{
 		db:        db,
-		eviction:  wtinylfu.NewWTinyLFUCache(cacheCapacity),
+		eviction:  wtinylfu.NewWTinyLFUCache(cacheCapacity, onEvict),
 		OriginURL: originURL,
 		NodeID:    nodeID,
 		httpClient: &http.Client{
