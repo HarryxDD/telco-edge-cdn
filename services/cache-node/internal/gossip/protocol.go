@@ -227,12 +227,16 @@ func (eg *EpidemicGossip) handleGossipMsg(w http.ResponseWriter, r *http.Request
 	switch msg.Type {
 	case MsgDigest:
 		eg.handleDigest(msg, w)
+	case MsgDiff:
+		eg.handleDiff(msg)
 	case MsgCacheAdd:
 		eg.handleCacheAdd(msg)
 	case MsgCacheInvalidate:
 		eg.handleCacheInvalidate(msg)
 	case MsgPreFetch:
 		eg.handlePreFetch(msg)
+	case MsgInventoryResponse:
+		eg.handleInventoryResponse(msg)
 	default:
 		// Call registered handlers
 		eg.mu.RLock()
@@ -248,13 +252,29 @@ func (eg *EpidemicGossip) handleGossipMsg(w http.ResponseWriter, r *http.Request
 }
 
 func (eg *EpidemicGossip) handleDigest(msg GossipMessage, w http.ResponseWriter) {
-	remoteDigest, ok := msg.Data.(map[string]int)
+	remoteDigest, ok := msg.Data.(map[string]interface{})
 	if !ok {
 		return
 	}
 
+	// Convert interface{} values to int
+	digest := make(map[string]int)
+	for k, v := range remoteDigest {
+		if val, ok := v.(float64); ok {
+			digest[k] = int(val)
+		}
+	}
+
+	eg.mu.RLock()
+	senderPeer, senderExists := eg.peers[msg.SenderID]
+	eg.mu.RUnlock()
+
+	if !senderExists {
+		return
+	}
+
 	// Check if we need updates
-	diff := eg.state.CompareTo(remoteDigest)
+	diff := eg.state.CompareTo(digest)
 	if len(diff) > 0 {
 		// Request missing data
 		response := GossipMessage{
@@ -262,7 +282,34 @@ func (eg *EpidemicGossip) handleDigest(msg GossipMessage, w http.ResponseWriter)
 			SenderID: eg.nodeID,
 			Data:     diff,
 		}
-		json.NewEncoder(w).Encode(response)
+		go eg.sendMessage(senderPeer, "/gossip/message", response)
+	}
+
+	// Check if sender needs updates
+	senderDiff := make([]string, 0)
+	localDigest := eg.state.GetDigest()
+	for nodeID, localVersion := range localDigest {
+		remoteVersion, exists := digest[nodeID]
+		if !exists || localVersion > remoteVersion {
+			senderDiff = append(senderDiff, nodeID)
+		}
+	}
+
+	if len(senderDiff) > 0 {
+		// We have newer data, send it
+		inventories := make(map[string]*CacheInventory)
+		for _, nodeID := range senderDiff {
+			if inv, exists := eg.state.GetInventory(nodeID); exists {
+				inventories[nodeID] = inv
+			}
+		}
+
+		response := GossipMessage{
+			Type:     MsgInventoryResponse,
+			SenderID: eg.nodeID,
+			Data:     inventories,
+		}
+		go eg.sendMessage(senderPeer, "/gossip/message", response)
 	}
 }
 
@@ -298,6 +345,89 @@ func (eg *EpidemicGossip) handlePreFetch(msg GossipMessage) {
 
 	for _, handler := range handlers {
 		go handler(msg)
+	}
+}
+
+func (eg *EpidemicGossip) handleDiff(msg GossipMessage) {
+	// Extract the list of node IDs where sender needs updates
+	nodeIDsInterface, ok := msg.Data.([]interface{})
+	if !ok {
+		return
+	}
+
+	// Convert to string slice
+	nodeIDs := make([]string, 0)
+	for _, idInterface := range nodeIDsInterface {
+		if nodeID, ok := idInterface.(string); ok {
+			nodeIDs = append(nodeIDs, nodeID)
+		}
+	}
+
+	eg.mu.RLock()
+	peer, exists := eg.peers[msg.SenderID]
+	eg.mu.RUnlock()
+
+	if !exists {
+		return
+	}
+
+	// Sender needs these inventories, so send them directly
+	inventories := make(map[string]*CacheInventory)
+	for _, nodeID := range nodeIDs {
+		if inv, exists := eg.state.GetInventory(nodeID); exists {
+			inventories[nodeID] = inv
+		}
+	}
+
+	if len(inventories) > 0 {
+		response := GossipMessage{
+			Type:     MsgInventoryResponse,
+			SenderID: eg.nodeID,
+			Data:     inventories,
+		}
+		go eg.sendMessage(peer, "/gossip/message", response)
+	}
+}
+
+func (eg *EpidemicGossip) handleInventoryResponse(msg GossipMessage) {
+	inventoriesData, ok := msg.Data.(map[string]interface{})
+	if !ok {
+		return
+	}
+
+	// Merge received inventories into local state
+	for nodeID, invData := range inventoriesData {
+		invMap, ok := invData.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		// Parse inventory
+		inv := &CacheInventory{
+			NodeID:   nodeID,
+			Segments: make(map[string]bool),
+		}
+
+		if segmentsData, ok := invMap["Segments"].(map[string]interface{}); ok {
+			for segID, exists := range segmentsData {
+				if existsBool, ok := exists.(bool); ok && existsBool {
+					inv.Segments[segID] = true
+				}
+			}
+		}
+
+		if version, ok := invMap["Version"].(float64); ok {
+			inv.Version = int(version)
+		}
+
+		if load, ok := invMap["Load"].(float64); ok {
+			inv.Load = load
+		}
+
+		// Update local state
+		eg.state.UpdateInventory(nodeID, inv)
+		log.Printf("[GOSSIP] Updated inventory for node %s: %d segments, version %d",
+			nodeID, len(inv.Segments), inv.Version)
 	}
 }
 
