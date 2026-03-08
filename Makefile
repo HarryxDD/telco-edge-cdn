@@ -333,17 +333,12 @@ clean-all: clab-down clean-docker ## Nuclear cleanup
 
 .DEFAULT_GOAL := help
 
-# FL monitoring
-fl-status: ## Show FL status
-	@echo "$(BLUE)FL Status:$(NC)"
-	@curl -s http://localhost:8092/status | jq .
-
-fl-logs: ## Show FL logs
-	@docker logs oulu-telco-cdn-oulu-ml-service 2>&1 | tail -20
-	@echo ""
-	@docker logs oulu-telco-cdn-oulu-oulu-fl-client 2>&1 | tail -20
-
 # Clean logs
 clean-logs: ## Clean access logs
 	@rm -rf data/oulu-logs/*.ndjson
 	@echo "Logs cleaned"
+
+clean-cache: ## Clean BadgerDB cache data (requires sudo)
+	@echo "$(RED)Cleaning cache data...$(NC)"
+	@sudo rm -rf data/cache-1/* data/cache-2/* data/cache-3/*
+	@echo "$(GREEN)Cache data cleaned!$(NC)"
